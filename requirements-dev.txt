@@ -1,0 +1,6 @@
+# Development / test-only dependencies.
+-r requirements.txt
+
+# Lets the app run against async SQLite for fast local tests without Postgres
+# (production still uses Postgres/JSONB via the portable JSON column type).
+aiosqlite>=0.19

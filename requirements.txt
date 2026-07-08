@@ -1,0 +1,39 @@
+# Web / API
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+
+# Config / validation
+pydantic>=2.6
+pydantic-settings>=2.1
+
+# Database
+SQLAlchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.1
+psycopg-pool>=3.2
+greenlet>=3.0  # required by SQLAlchemy async
+
+# Telegram
+python-telegram-bot>=21.0
+
+# HTTP
+httpx>=0.26
+
+# Scheduling
+APScheduler>=3.10
+python-dateutil>=2.8
+
+# Reports
+reportlab>=4.0
+matplotlib>=3.8
+
+# --- AI stack ---
+# Core is required; langmem + postgres checkpointer are imported defensively
+# so the app still boots if they are unavailable in a given environment.
+langgraph>=0.2
+langchain>=0.3
+langchain-core>=0.3
+langchain-openai>=0.2
+langgraph-checkpoint-postgres>=2.0
+langmem>=0.0.15
