@@ -70,22 +70,34 @@ class Default(WorkerEntrypoint):
         with bind_worker_env(self.env):
             _debug_log("H3", "src/entry.py:58", "fetch_enter", {"url": str(request.url), "method": str(request.method)})
             try:
-                from app.config import settings
-                from app.worker_app import delete_webhook, health_payload, process_update, set_webhook, sync_settings
-
-                _debug_log("H1", "src/entry.py:63", "imports_loaded", {"elapsed_ms": int((time.time() - started_at) * 1000)})
-                sync_settings()
                 url = urlparse(str(request.url))
                 path = url.path
                 method = str(request.method).upper()
-                _debug_log("H1", "src/entry.py:68", "post_sync_settings", {"path": path, "method": method, "elapsed_ms": int((time.time() - started_at) * 1000)})
+                _debug_log("H1", "src/entry.py:65", "parsed_request", {"path": path, "method": method, "elapsed_ms": int((time.time() - started_at) * 1000)})
 
                 if path == "/favicon.ico":
                     return Response("", status=204)
 
                 if method == "GET" and path == "/healthz":
-                    _debug_log("H2", "src/entry.py:74", "health_route_before_payload", {"elapsed_ms": int((time.time() - started_at) * 1000)})
-                    return _json_response(health_payload())
+                    _debug_log("H2", "src/entry.py:71", "health_route_fast_path", {"elapsed_ms": int((time.time() - started_at) * 1000)})
+                    return _json_response(
+                        {
+                            "status": "ok",
+                            "app": os.environ.get("APP_NAME", "telegram-fitness-coach"),
+                            "ai_enabled": bool(getattr(self.env, "OPENAI_API_KEY", None)),
+                            "fatsecret_enabled": False,
+                            "memory_backend": "d1-context",
+                            "telegram_enabled": bool(getattr(self.env, "TELEGRAM_BOT_TOKEN", None)),
+                            "runtime": "worker",
+                        }
+                    )
+
+                from app.config import settings
+                from app.worker_app import delete_webhook, process_update, set_webhook, sync_settings
+
+                _debug_log("H1", "src/entry.py:83", "imports_loaded", {"elapsed_ms": int((time.time() - started_at) * 1000)})
+                sync_settings()
+                _debug_log("H1", "src/entry.py:85", "post_sync_settings", {"path": path, "method": method, "elapsed_ms": int((time.time() - started_at) * 1000)})
 
                 if method == "POST" and path == settings.webhook_path:
                     secret = request.headers.get("x-telegram-bot-api-secret-token")
