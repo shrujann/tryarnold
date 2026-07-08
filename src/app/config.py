@@ -1,15 +1,14 @@
 """Application settings for Cloudflare Workers + D1."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
     app_name: str = "telegram-fitness-coach"
     log_level: str = "INFO"
@@ -45,7 +44,14 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    if os.environ.get("APP_RUNTIME") == "worker":
+        return Settings(_env_file=None)
+    return Settings(_env_file=".env", _env_file_encoding="utf-8")
 
 
-settings = get_settings()
+class _SettingsProxy:
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+
+settings = _SettingsProxy()

@@ -66,7 +66,6 @@ def sync_settings() -> None:
     _debug_log("H1", "src/app/worker_app.py:62", "sync_settings_enter", {})
     get_settings.cache_clear()
     fresh = get_settings()
-    settings.__dict__.update(fresh.__dict__)
     _debug_log("H1", "src/app/worker_app.py:66", "sync_settings_exit", {"app_name": settings.app_name, "runtime": settings.app_runtime, "has_public_base_url": bool(settings.public_base_url)})
 
 
