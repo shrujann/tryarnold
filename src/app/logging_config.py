@@ -20,7 +20,6 @@ def configure_logging() -> None:
     )
     # Quiet down noisy libraries a touch.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
     _CONFIGURED = True
 
 

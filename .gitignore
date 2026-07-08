@@ -8,8 +8,14 @@ dist/
 
 # Virtual envs
 .venv/
+.venv-workers/
 venv/
 env/
+python_modules/
+.wrangler/
+uv.lock
+pylock.toml
+*.egg-info/
 
 # Environment / secrets
 .env
