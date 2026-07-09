@@ -26,6 +26,27 @@ export async function verifyLineSignature(
   return signature === expected;
 }
 
+/** Build Flex footer rows: one horizontal box per button row. */
+export function buildFlexFooterContents(buttons: ButtonRow[]): unknown[] {
+  return buttons.map((row) => ({
+    type: "box",
+    layout: "horizontal",
+    flex: 0,
+    spacing: "sm",
+    contents: row.map((btn) => ({
+      type: "button",
+      style: "primary",
+      height: "sm",
+      flex: 1,
+      action: {
+        type: "postback",
+        label: btn.label,
+        data: btn.data,
+      },
+    })),
+  }));
+}
+
 export class LineChannel implements MessagingChannel {
   readonly name = "line";
 
@@ -100,17 +121,6 @@ export class LineChannel implements MessagingChannel {
     buttons: ButtonRow[],
     replyToken?: string | null,
   ): Promise<void> {
-    const footerButtons = buttons.flat().map((btn) => ({
-      type: "button",
-      style: "primary",
-      height: "sm",
-      action: {
-        type: "postback",
-        label: btn.label,
-        data: btn.data,
-      },
-    }));
-
     const flexMessage = {
       type: "flex",
       altText: stripEmoji(text).slice(0, 400),
@@ -129,9 +139,10 @@ export class LineChannel implements MessagingChannel {
         },
         footer: {
           type: "box",
-          layout: "horizontal",
-          contents: footerButtons,
+          layout: "vertical",
           flex: 0,
+          spacing: "sm",
+          contents: buildFlexFooterContents(buttons),
         },
       },
     };
@@ -155,6 +166,35 @@ export class LineChannel implements MessagingChannel {
     return { bytes, mime };
   }
 
+  async setWebhook(): Promise<boolean> {
+    const endpoint = this.settings.lineWebhookUrl;
+    const resp = await fetch("https://api.line.me/v2/bot/channel/webhook/endpoint", {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ endpoint }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.text();
+      throw new Error(`LINE setWebhook failed: ${resp.status} ${detail}`);
+    }
+    return true;
+  }
+
+  async deleteWebhook(): Promise<boolean> {
+    const resp = await fetch("https://api.line.me/v2/bot/channel/webhook/endpoint", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (!resp.ok) {
+      const detail = await resp.text();
+      throw new Error(`LINE deleteWebhook failed: ${resp.status} ${detail}`);
+    }
+    return true;
+  }
+
   parseUpdate(update: unknown): InboundMessage[] | null {
     if (!update || typeof update !== "object") return null;
     const payload = update as { events?: unknown[] };
@@ -176,6 +216,17 @@ export class LineChannel implements MessagingChannel {
     if (!userId) return null;
 
     const replyToken = e.replyToken ? String(e.replyToken) : null;
+
+    if (e.type === "follow") {
+      return {
+        channel: this.name,
+        externalUserId: userId,
+        chatId: userId,
+        isFollow: true,
+        replyToken,
+        raw: event,
+      };
+    }
 
     if (e.type === "postback") {
       const postback = (e.postback ?? {}) as Record<string, unknown>;

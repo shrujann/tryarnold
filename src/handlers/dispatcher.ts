@@ -22,8 +22,26 @@ export async function processMessage(
   const userId = user.id;
   const chatId = msg.chatId;
 
-  const kind = hasPhoto(msg) ? "photo" : isCallback(msg) ? "system" : "text";
-  await logMessage(db, userId, "in", displayText(msg), channel.name, kind);
+  const kind = msg.isFollow
+    ? "system"
+    : hasPhoto(msg)
+      ? "photo"
+      : isCallback(msg)
+        ? "system"
+        : "text";
+  await logMessage(
+    db,
+    userId,
+    "in",
+    msg.isFollow ? "follow" : displayText(msg),
+    channel.name,
+    kind,
+  );
+
+  if (msg.isFollow) {
+    await handleCommand(channel, db, chatId, user, "/start", msg.replyToken);
+    return;
+  }
 
   const text = (msg.text ?? "").trim();
 

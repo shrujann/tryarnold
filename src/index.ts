@@ -139,6 +139,46 @@ export default {
         }
       }
 
+      if (method === "POST" && path === "/admin/set-line-webhook") {
+        if (!checkAdminAuth(request, env)) {
+          return jsonResponse({ detail: "unauthorized" }, 401);
+        }
+        try {
+          const channel = new LineChannel(settings);
+          if (!channel.enabled) throw new Error("LINE not configured");
+          const ok = await channel.setWebhook();
+          return jsonResponse({ ok, url: settings.lineWebhookUrl });
+        } catch (err) {
+          return jsonResponse(
+            {
+              detail: err instanceof Error ? err.message : String(err),
+              error: err instanceof Error ? err.name : "Error",
+            },
+            502,
+          );
+        }
+      }
+
+      if (method === "POST" && path === "/admin/delete-line-webhook") {
+        if (!checkAdminAuth(request, env)) {
+          return jsonResponse({ detail: "unauthorized" }, 401);
+        }
+        try {
+          const channel = new LineChannel(settings);
+          if (!channel.enabled) throw new Error("LINE not configured");
+          const ok = await channel.deleteWebhook();
+          return jsonResponse({ ok });
+        } catch (err) {
+          return jsonResponse(
+            {
+              detail: err instanceof Error ? err.message : String(err),
+              error: err instanceof Error ? err.name : "Error",
+            },
+            502,
+          );
+        }
+      }
+
       return jsonResponse({ detail: "not found" }, 404);
     } catch (err) {
       return jsonResponse(

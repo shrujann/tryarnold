@@ -3,7 +3,6 @@ import type { UserRow } from "../db/users";
 import { dailyTotals } from "../db/users";
 import { getLastMeal } from "../db/meals";
 import { stripEmoji } from "../services/text-style";
-import { LineChannel } from "../channels/line";
 
 export const HELP =
   "how this works:\n" +
@@ -27,11 +26,7 @@ async function sendOut(
   replyToken?: string | null,
 ): Promise<void> {
   const cleaned = stripEmoji(text);
-  if (channel instanceof LineChannel && replyToken) {
-    await channel.sendText(chatId, cleaned, replyToken);
-  } else {
-    await channel.sendText(chatId, cleaned);
-  }
+  await channel.sendText(chatId, cleaned, replyToken);
   const { logMessage } = await import("../db/messages");
   await logMessage(db, userId, "out", cleaned, channelName);
 }

@@ -73,7 +73,11 @@ export class TelegramChannel implements MessagingChannel {
     return data.result;
   }
 
-  async sendText(chatId: string | number, text: string): Promise<void> {
+  async sendText(
+    chatId: string | number,
+    text: string,
+    _replyToken?: string | null,
+  ): Promise<void> {
     const cleaned = stripEmoji(text);
     for (const chunk of chunkText(cleaned, 4096)) {
       await this.call("sendMessage", { chat_id: chatId, text: chunk });
@@ -84,6 +88,7 @@ export class TelegramChannel implements MessagingChannel {
     chatId: string | number,
     text: string,
     buttons: ButtonRow[],
+    _replyToken?: string | null,
   ): Promise<void> {
     const replyMarkup = {
       inline_keyboard: buttons.map((row) =>

@@ -18,6 +18,7 @@ export interface InboundMessage {
   callbackData?: string | null;
   callbackQueryId?: string | null;
   replyToken?: string | null;
+  isFollow?: boolean;
   timestamp?: Date;
   raw?: unknown;
 }
@@ -32,11 +33,16 @@ export interface DownloadedImage {
 export interface MessagingChannel {
   readonly name: string;
   readonly enabled: boolean;
-  sendText(chatId: string | number, text: string): Promise<void>;
+  sendText(
+    chatId: string | number,
+    text: string,
+    replyToken?: string | null,
+  ): Promise<void>;
   sendTextWithKeyboard(
     chatId: string | number,
     text: string,
     buttons: ButtonRow[],
+    replyToken?: string | null,
   ): Promise<void>;
   answerCallback?(callbackQueryId: string): Promise<void>;
   downloadPhoto(fileId: string): Promise<DownloadedImage>;

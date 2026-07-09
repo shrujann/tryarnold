@@ -6,8 +6,6 @@ import { insertPendingMeal } from "../db/pending-meals";
 import { needsPortionConfirm } from "../schemas/nutrition";
 import { estimateFromImage } from "../agents/vision";
 import { stripEmoji } from "../services/text-style";
-import { LineChannel } from "../channels/line";
-import { TelegramChannel } from "../channels/telegram";
 import { sendOut } from "./commands";
 
 export async function handlePhoto(
@@ -37,12 +35,7 @@ export async function handlePhoto(
   if (!msg.photo) return;
 
   try {
-    let image;
-    if (channel instanceof LineChannel && msg.photo.messageId) {
-      image = await channel.downloadPhoto(msg.photo.messageId);
-    } else {
-      image = await channel.downloadPhoto(msg.photo.fileId);
-    }
+    const image = await channel.downloadPhoto(msg.photo.fileId);
 
     let estimate = await estimateFromImage(
       env,
@@ -103,13 +96,7 @@ export async function handlePhoto(
     }
 
     const cleaned = stripEmoji(prompt);
-    if (channel instanceof LineChannel) {
-      await channel.sendTextWithKeyboard(chatId, cleaned, buttons, msg.replyToken);
-    } else if (channel instanceof TelegramChannel) {
-      await channel.sendTextWithKeyboard(chatId, cleaned, buttons);
-    } else {
-      await channel.sendTextWithKeyboard(chatId, cleaned, buttons);
-    }
+    await channel.sendTextWithKeyboard(chatId, cleaned, buttons, msg.replyToken);
 
     const { logMessage } = await import("../db/messages");
     await logMessage(db, userId, "out", cleaned, channel.name);
