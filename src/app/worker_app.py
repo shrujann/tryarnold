@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import base64
 import json
-import time
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
+from workers import fetch
 
 from app.channels.base import InboundMessage
 from app.channels.telegram_httpx import TelegramHttpxChannel
@@ -34,51 +33,21 @@ WELCOME = (
 )
 
 _channel: TelegramHttpxChannel | None = None
-DEBUG_LOG_PATH = "/Users/shrujan/Documents/GitHub/tryarnold/.cursor/debug-c72a96.log"
-DEBUG_SESSION_ID = "c72a96"
-
-
-# region agent log
-def _debug_log(hypothesis_id: str, location: str, message: str, data: dict | None = None) -> None:
-    payload = {
-        "sessionId": DEBUG_SESSION_ID,
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload, separators=(",", ":"))
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except Exception:
-        pass
-    try:
-        print(line)
-    except Exception:
-        pass
-# endregion
 
 
 def sync_settings() -> None:
-    _debug_log("H1", "src/app/worker_app.py:62", "sync_settings_enter", {})
     get_settings.cache_clear()
-    fresh = get_settings()
-    _debug_log("H1", "src/app/worker_app.py:66", "sync_settings_exit", {"app_name": settings.app_name, "runtime": settings.app_runtime, "has_public_base_url": bool(settings.public_base_url)})
+    get_settings()
 
 
 def get_channel() -> TelegramHttpxChannel:
     global _channel
     if _channel is None:
-        _debug_log("H2", "src/app/worker_app.py:72", "create_channel", {"token_configured": bool(settings.telegram_bot_token)})
         _channel = TelegramHttpxChannel()
     return _channel
 
 
 def health_payload() -> dict:
-    _debug_log("H2", "src/app/worker_app.py:78", "health_payload_enter", {})
     channel = get_channel()
     payload = {
         "status": "ok",
@@ -89,7 +58,6 @@ def health_payload() -> dict:
         "telegram_enabled": channel.enabled,
         "runtime": "worker",
     }
-    _debug_log("H2", "src/app/worker_app.py:88", "health_payload_exit", {"telegram_enabled": payload["telegram_enabled"], "ai_enabled": payload["ai_enabled"]})
     return payload
 
 
@@ -220,18 +188,21 @@ async def openai_chat(messages: list[dict], *, vision: bool = False) -> str | No
     if not settings.openai_api_key:
         return None
     model = settings.openai_vision_model if vision else settings.openai_model
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"model": model, "temperature": 0.4, "messages": messages},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content")
+    resp = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+        body=json.dumps({"model": model, "temperature": 0.4, "messages": messages}),
+    )
+    data = await resp.json()
+    if not isinstance(data, dict):
+        return None
+    if data.get("error"):
+        raise RuntimeError(str(data["error"]))
+    return (data.get("choices") or [{}])[0].get("message", {}).get("content")
 
 
 async def estimate_from_image(image_bytes: bytes, caption: str | None) -> MacroEstimate:
@@ -272,7 +243,7 @@ async def estimate_from_image(image_bytes: bytes, caption: str | None) -> MacroE
         start = content.find("{")
         end = content.rfind("}")
         payload = json.loads(content[start : end + 1])
-        estimate = MacroEstimate.model_validate(payload)
+        estimate = MacroEstimate.from_dict(payload)
         if estimate.food_confidence or estimate.portion_confidence:
             estimate.confidence = min(
                 estimate.food_confidence or 1.0,
@@ -383,7 +354,7 @@ async def _handle_photo(
     await _run(
         "INSERT INTO pending_meals (user_id, estimate_json, base_multiplier, tg_file_id, tg_file_unique_id, photo_caption, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         user_id,
-        json.dumps(estimate.model_dump()),
+        json.dumps(estimate.to_dict()),
         multiplier,
         msg.photo.file_id,
         msg.photo.file_unique_id,
@@ -443,7 +414,7 @@ async def _handle_confirmation(
 
     raw = pending["estimate_json"]
     payload = json.loads(raw) if isinstance(raw, str) else raw
-    estimate = MacroEstimate.model_validate(payload)
+    estimate = MacroEstimate.from_dict(payload)
     if factor != 1.0:
         estimate = estimate.apply_multiplier(factor)
 
@@ -457,7 +428,7 @@ async def _handle_confirmation(
         estimate.carbs_g,
         estimate.fat_g,
         estimate.confidence,
-        json.dumps([item.model_dump() for item in estimate.items]),
+        json.dumps([item.__dict__ for item in estimate.items]),
         pending.get("tg_file_id"),
         pending.get("tg_file_unique_id"),
         pending.get("photo_caption"),

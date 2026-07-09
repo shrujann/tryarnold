@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from urllib.parse import urlparse
 
 from workers import Response, WorkerEntrypoint
 
 from app.runtime import bind_worker_env
-
-DEBUG_LOG_PATH = "/Users/shrujan/Documents/GitHub/tryarnold/.cursor/debug-c72a96.log"
-DEBUG_SESSION_ID = "c72a96"
 
 
 def _bootstrap_env(env) -> None:
@@ -36,93 +32,113 @@ def _bootstrap_env(env) -> None:
 
 
 def _json_response(data: dict, status: int = 200) -> Response:
-    return Response(json.dumps(data), status=status, headers={"content-type": "application/json"})
-
-
-# region agent log
-def _debug_log(hypothesis_id: str, location: str, message: str, data: dict | None = None) -> None:
-    payload = {
-        "sessionId": DEBUG_SESSION_ID,
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload, separators=(",", ":"))
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except Exception:
-        pass
-    try:
-        print(line)
-    except Exception:
-        pass
-# endregion
+    return Response(
+        json.dumps(data),
+        status=status,
+        headers={"content-type": "application/json"},
+    )
 
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        started_at = time.time()
         _bootstrap_env(self.env)
         with bind_worker_env(self.env):
-            _debug_log("H3", "src/entry.py:58", "fetch_enter", {"url": str(request.url), "method": str(request.method)})
             try:
                 url = urlparse(str(request.url))
                 path = url.path
                 method = str(request.method).upper()
-                _debug_log("H1", "src/entry.py:65", "parsed_request", {"path": path, "method": method, "elapsed_ms": int((time.time() - started_at) * 1000)})
 
                 if path == "/favicon.ico":
                     return Response("", status=204)
 
                 if method == "GET" and path == "/healthz":
-                    _debug_log("H2", "src/entry.py:71", "health_route_fast_path", {"elapsed_ms": int((time.time() - started_at) * 1000)})
                     return _json_response(
                         {
                             "status": "ok",
-                            "app": os.environ.get("APP_NAME", "telegram-fitness-coach"),
-                            "ai_enabled": bool(getattr(self.env, "OPENAI_API_KEY", None)),
+                            "app": os.environ.get(
+                                "APP_NAME", "telegram-fitness-coach"
+                            ),
+                            "ai_enabled": bool(
+                                getattr(self.env, "OPENAI_API_KEY", None)
+                            ),
                             "fatsecret_enabled": False,
                             "memory_backend": "d1-context",
-                            "telegram_enabled": bool(getattr(self.env, "TELEGRAM_BOT_TOKEN", None)),
+                            "telegram_enabled": bool(
+                                getattr(self.env, "TELEGRAM_BOT_TOKEN", None)
+                            ),
                             "runtime": "worker",
                         }
                     )
 
-                from app.config import settings
-                from app.worker_app import delete_webhook, process_update, set_webhook, sync_settings
+                if method == "POST" and path == "/telegram/webhook/ping":
+                    return _json_response({"ok": True, "ping": True})
 
-                _debug_log("H1", "src/entry.py:83", "imports_loaded", {"elapsed_ms": int((time.time() - started_at) * 1000)})
-                sync_settings()
-                _debug_log("H1", "src/entry.py:85", "post_sync_settings", {"path": path, "method": method, "elapsed_ms": int((time.time() - started_at) * 1000)})
+                if method == "POST" and path == "/telegram/webhook":
+                    raw_secret = request.headers.get(
+                        "x-telegram-bot-api-secret-token"
+                    )
+                    secret = "" if raw_secret is None else str(raw_secret)
+                    expected = str(
+                        getattr(self.env, "TELEGRAM_WEBHOOK_SECRET", None)
+                        or os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+                        or "change-me"
+                    )
+                    if secret != expected:
+                        return _json_response(
+                            {"detail": "invalid secret token"}, status=403
+                        )
 
-                if method == "POST" and path == settings.webhook_path:
-                    secret = request.headers.get("x-telegram-bot-api-secret-token")
-                    if secret != settings.telegram_webhook_secret:
-                        return _json_response({"detail": "invalid secret token"}, status=403)
                     update = await request.json()
+                    from app.worker_app import process_update, sync_settings
+
+                    sync_settings()
+                    # Process inline: waitUntil + ContextVar loses D1 binding in
+                    # Python Workers. Network wait does not count against Free CPU.
                     try:
                         await process_update(update)
                     except Exception as exc:
-                        return _json_response({"ok": False, "error": str(exc)}, status=500)
+                        return _json_response(
+                            {
+                                "ok": False,
+                                "error": type(exc).__name__,
+                                "detail": str(exc),
+                            },
+                            status=500,
+                        )
                     return _json_response({"ok": True})
 
                 if method == "POST" and path == "/admin/set-webhook":
                     try:
+                        from app.worker_app import set_webhook, sync_settings
+
+                        sync_settings()
                         return _json_response(await set_webhook())
                     except Exception as exc:
-                        return _json_response({"detail": str(exc)}, status=502)
+                        return _json_response(
+                            {"detail": str(exc), "error": type(exc).__name__},
+                            status=502,
+                        )
 
                 if method == "POST" and path == "/admin/delete-webhook":
                     try:
+                        from app.worker_app import delete_webhook, sync_settings
+
+                        sync_settings()
                         return _json_response(await delete_webhook())
                     except Exception as exc:
-                        return _json_response({"detail": str(exc)}, status=502)
+                        return _json_response(
+                            {"detail": str(exc), "error": type(exc).__name__},
+                            status=502,
+                        )
 
                 return _json_response({"detail": "not found"}, status=404)
             except Exception as exc:
-                _debug_log("H1", "src/entry.py:99", "fetch_exception", {"type": type(exc).__name__, "detail": str(exc), "elapsed_ms": int((time.time() - started_at) * 1000)})
-                raise
+                return _json_response(
+                    {
+                        "ok": False,
+                        "stage": "fetch",
+                        "error": type(exc).__name__,
+                        "detail": str(exc),
+                    },
+                    status=500,
+                )

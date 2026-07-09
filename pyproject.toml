@@ -3,11 +3,7 @@ name = "tryarnold"
 version = "0.1.0"
 description = "Cloudflare Workers + D1 Telegram fitness coach"
 requires-python = ">=3.13"
-dependencies = [
-    "httpx>=0.26",
-    "pydantic>=2.6",
-    "pydantic-settings>=2.1",
-]
+dependencies = []
 
 [dependency-groups]
 dev = [

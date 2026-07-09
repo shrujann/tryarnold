@@ -1,4 +1,4 @@
-"""Pending meal confirmation action tokens."""
+"""Pending meal confirmation action tokens (stdlib only)."""
 from __future__ import annotations
 
 from app.config import settings
@@ -23,12 +23,9 @@ def action_factors() -> dict[str, float | None]:
     }
 
 
-CONFIRM_TOKENS = frozenset(action_factors().keys())
-
-
 def normalize_action(text: str) -> str | None:
     token = text.strip().lower()
     if token.startswith("meal:"):
         token = token.split(":", 1)[1]
         token = token.removeprefix("size_")
-    return token if token in CONFIRM_TOKENS else None
+    return token if token in action_factors() else None

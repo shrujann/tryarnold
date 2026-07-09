@@ -1,9 +1,9 @@
-"""Telegram transport using raw Bot API calls over httpx."""
+"""Telegram transport using Workers-native fetch (no httpx)."""
 from __future__ import annotations
 
-import io
+import json
 
-import httpx
+from workers import fetch
 
 from app.channels.base import InboundMessage, InboundPhoto, MessagingChannel
 from app.config import settings
@@ -18,7 +18,6 @@ class TelegramHttpxChannel(MessagingChannel):
 
     def __init__(self, token: str | None = None) -> None:
         self._token = token or settings.telegram_bot_token
-        self._http: httpx.AsyncClient | None = None
 
     @property
     def enabled(self) -> bool:
@@ -37,48 +36,33 @@ class TelegramHttpxChannel(MessagingChannel):
         return f"https://api.telegram.org/file/bot{self._token}"
 
     async def initialize(self) -> None:
-        if self.enabled and self._http is None:
-            self._http = httpx.AsyncClient(timeout=30.0)
+        return None
 
     async def shutdown(self) -> None:
-        if self._http is not None:
-            await self._http.aclose()
-            self._http = None
+        return None
 
-    async def _ensure_ready(self) -> httpx.AsyncClient:
-        await self.initialize()
-        if self._http is None:
-            raise RuntimeError("Telegram HTTP client unavailable")
-        return self._http
-
-    async def _call(
-        self,
-        method: str,
-        *,
-        data: dict | None = None,
-        files: dict | None = None,
-    ) -> dict:
-        http = await self._ensure_ready()
-        resp = await http.post(f"{self._base_url}/{method}", data=data, files=files)
-        resp.raise_for_status()
-        payload = resp.json()
-        if not payload.get("ok"):
-            raise RuntimeError(payload.get("description", f"Telegram {method} failed"))
-        return payload["result"]
+    async def _call(self, method: str, **payload) -> dict:
+        resp = await fetch(
+            f"{self._base_url}/{method}",
+            method="POST",
+            headers={"content-type": "application/json"},
+            body=json.dumps(payload),
+        )
+        data = await resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Telegram {method} returned non-JSON")
+        if not data.get("ok"):
+            raise RuntimeError(data.get("description", f"Telegram {method} failed"))
+        return data["result"]
 
     async def send_text(self, chat_id: int, text: str) -> None:
         text = strip_emoji(text)
         for chunk in _chunk(text, 4096):
-            await self._call(
-                "sendMessage",
-                data={"chat_id": str(chat_id), "text": chunk},
-            )
+            await self._call("sendMessage", chat_id=chat_id, text=chunk)
 
     async def send_text_with_keyboard(
         self, chat_id: int, text: str, buttons: list[list[tuple[str, str]]]
     ) -> None:
-        import json
-
         reply_markup = {
             "inline_keyboard": [
                 [{"text": label, "callback_data": data} for label, data in row]
@@ -87,71 +71,53 @@ class TelegramHttpxChannel(MessagingChannel):
         }
         await self._call(
             "sendMessage",
-            data={
-                "chat_id": str(chat_id),
-                "text": strip_emoji(text),
-                "reply_markup": json.dumps(reply_markup),
-            },
+            chat_id=chat_id,
+            text=strip_emoji(text),
+            reply_markup=reply_markup,
         )
 
     async def answer_callback(self, callback_query_id: str) -> None:
         try:
-            await self._call(
-                "answerCallbackQuery", data={"callback_query_id": callback_query_id}
-            )
+            await self._call("answerCallbackQuery", callback_query_id=callback_query_id)
         except Exception:
             log.debug("answerCallbackQuery failed", exc_info=True)
 
     async def send_photo(self, chat_id: int, file_id_or_bytes, caption: str | None = None) -> None:
         caption = strip_emoji(caption) if caption else caption
         if isinstance(file_id_or_bytes, (bytes, bytearray)):
-            files = {"photo": ("photo.jpg", bytes(file_id_or_bytes), "image/jpeg")}
-            data = {"chat_id": str(chat_id)}
-            if caption:
-                data["caption"] = caption
-            await self._call("sendPhoto", data=data, files=files)
-            return
-        data = {"chat_id": str(chat_id), "photo": str(file_id_or_bytes)}
+            raise RuntimeError("byte photo upload is not supported on this worker")
+        payload = {"chat_id": chat_id, "photo": str(file_id_or_bytes)}
         if caption:
-            data["caption"] = caption
-        await self._call("sendPhoto", data=data)
+            payload["caption"] = caption
+        await self._call("sendPhoto", **payload)
 
     async def send_document(
         self, chat_id: int, data: bytes, filename: str, caption: str | None = None
     ) -> None:
-        payload = {"chat_id": str(chat_id)}
-        if caption:
-            payload["caption"] = strip_emoji(caption)
-        files = {"document": (filename, io.BytesIO(data), "application/octet-stream")}
-        await self._call("sendDocument", data=payload, files=files)
+        raise RuntimeError("document upload is not supported on this worker")
 
     async def download_photo(self, file_id: str) -> bytes:
-        result = await self._call("getFile", data={"file_id": file_id})
+        result = await self._call("getFile", file_id=file_id)
         path = result.get("file_path")
         if not path:
             raise RuntimeError("Telegram file_path missing")
-        http = await self._ensure_ready()
-        resp = await http.get(f"{self._file_url}/{path}")
-        resp.raise_for_status()
-        return resp.content
+        resp = await fetch(f"{self._file_url}/{path}")
+        # Python Workers Response exposes JS arrayBuffer via FFI.
+        buffer = await resp.arrayBuffer()
+        return bytes(buffer.to_py() if hasattr(buffer, "to_py") else buffer)
 
     async def set_webhook(self) -> bool:
         await self._call(
             "setWebhook",
-            data={
-                "url": settings.webhook_url,
-                "secret_token": settings.telegram_webhook_secret,
-                "allowed_updates": '["message","callback_query"]',
-                "drop_pending_updates": "true",
-            },
+            url=settings.webhook_url,
+            secret_token=settings.telegram_webhook_secret,
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True,
         )
         return True
 
     async def delete_webhook(self) -> bool:
-        await self._call(
-            "deleteWebhook",
-            data={"drop_pending_updates": "false"},
-        )
+        await self._call("deleteWebhook", drop_pending_updates=False)
         return True
 
     def parse_update(self, update: dict) -> InboundMessage | None:
