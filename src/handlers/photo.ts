@@ -8,6 +8,39 @@ import { estimateFromImage } from "../agents/vision";
 import { stripEmoji } from "../services/text-style";
 import { sendOut } from "./commands";
 
+function debugLog(message: string, hypothesisId: string, data: Record<string, unknown>): void {
+  // #region agent log
+  console.error(
+    "LINE_PHOTO_DEBUG",
+    JSON.stringify({
+      sessionId: "ae6431",
+      runId: "pre-fix-console",
+      hypothesisId,
+      location: "src/handlers/photo.ts",
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  );
+  fetch("http://127.0.0.1:7685/ingest/9e085500-f454-4050-a819-bbbb69fc0e17", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "ae6431",
+    },
+    body: JSON.stringify({
+      sessionId: "ae6431",
+      runId: "pre-fix",
+      hypothesisId,
+      location: "src/handlers/photo.ts",
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+}
+
 export async function handlePhoto(
   env: Env,
   db: D1Database,
@@ -36,6 +69,12 @@ export async function handlePhoto(
 
   try {
     const image = await channel.downloadPhoto(msg.photo.fileId);
+    debugLog("photo downloaded", "H3", {
+      mime: image.mime,
+      bytesLength: image.bytes.byteLength,
+      hasCaption: Boolean(msg.caption),
+      channel: channel.name,
+    });
 
     let estimate = await estimateFromImage(
       env,
@@ -64,6 +103,24 @@ export async function handlePhoto(
       mediaRef: msg.photo.fileId,
       mediaUniqueRef: msg.photo.fileUniqueId,
       photoCaption: msg.caption,
+    });
+    debugLog("final estimate before prompt", "H4", {
+      description: estimate.description,
+      calories: estimate.calories,
+      protein_g: estimate.protein_g,
+      carbs_g: estimate.carbs_g,
+      fat_g: estimate.fat_g,
+      portion_confidence: estimate.portion_confidence,
+      food_confidence: estimate.food_confidence,
+      itemCount: estimate.items.length,
+      itemsPreview: estimate.items.slice(0, 3).map((item) => ({
+        name: item.name,
+        calories: item.calories,
+        protein_g: item.protein_g,
+        carbs_g: item.carbs_g,
+        fat_g: item.fat_g,
+      })),
+      appliedMultiplier: multiplier,
     });
 
     const names = (estimate.items ?? []).slice(0, 3).map((i) => i.name);
