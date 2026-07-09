@@ -1,76 +1,104 @@
-# Cloudflare Workers + D1 Telegram fitness coach
+# Cloudflare Workers + D1 fitness coach
 
-Telegram food-photo coach that runs entirely on **Cloudflare Workers** with
-**D1** for durable data. No Docker / Postgres / LangMem stack.
+Telegram and LINE food-photo coach on **Cloudflare Workers** with **D1** for
+durable data. TypeScript + LangGraph agents via OpenRouter.
 
 ## What it does
 
-- Telegram webhook (text + food photos + portion confirmation buttons)
-- GPT vision for meal macros (GPT-only; FatSecret not used on Workers Free)
+- Telegram webhook (text + food photos + inline keyboard portion buttons)
+- LINE Messaging API webhook (text + images + Flex postback buttons)
+- Vision + coach chat via OpenRouter (LangGraph ReAct agent)
 - D1 persistence for users, meals, pending photos, message log
-- Coach chat rehydrates context from recent D1 rows (not LangGraph memory)
-
-## What it deliberately drops
-
-- Docker / docker-compose / Postgres / Alembic
-- LangChain / LangGraph / LangMem
-- SQLAlchemy
-- FatSecret client (Workers Free has no stable egress IP)
-- APScheduler nudges and PDF reports
 
 ## Setup
 
-1. Install Node + uv, then in this repo:
+1. Install dependencies:
 
 ```bash
-uv sync
+npm install
 ```
 
-2. Ensure `wrangler.toml` has your D1 `database_id`.
+2. Ensure `wrangler.toml` has your D1 `database_id` and `PUBLIC_BASE_URL`.
 
-3. Apply migrations:
+3. Copy env template for local dev:
 
 ```bash
-uv run pywrangler d1 migrations apply arnold --remote
+cp .env.example .dev.vars
+# fill in secrets in .dev.vars (never commit this file)
 ```
 
-4. Set secrets:
+4. Apply migrations:
 
 ```bash
-uv run pywrangler secret put TELEGRAM_BOT_TOKEN
-uv run pywrangler secret put TELEGRAM_WEBHOOK_SECRET
-uv run pywrangler secret put OPENAI_API_KEY
+npx wrangler d1 migrations apply arnold --local   # local dev
+npx wrangler d1 migrations apply arnold --remote  # production
 ```
 
-5. Put your public HTTPS base in `wrangler.toml` `[vars]`:
+5. Set production secrets:
 
-```toml
-PUBLIC_BASE_URL = "https://tryarnold.<subdomain>.workers.dev"
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put LINE_CHANNEL_SECRET
+npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+npx wrangler secret put ADMIN_SECRET
 ```
 
 6. Deploy:
 
 ```bash
-uv run pywrangler deploy
+npm run deploy
 ```
 
-7. Register webhook:
+7. Register webhooks (requires `ADMIN_SECRET` header):
 
 ```bash
-curl -X POST https://<your-worker-url>/admin/set-webhook
+curl -X POST https://<your-worker-url>/admin/set-webhook \
+  -H "X-Admin-Secret: <ADMIN_SECRET>"
+
+curl -X POST https://<your-worker-url>/admin/set-line-webhook \
+  -H "X-Admin-Secret: <ADMIN_SECRET>"
 ```
 
-Health: `GET /healthz`
+Health: `GET /healthz` — check `telegram_enabled` and `line_enabled`.
+
+## LINE Developers Console
+
+1. Create a provider and **Messaging API channel** at
+   [LINE Developers Console](https://developers.line.biz/console/).
+2. Issue **Channel secret** and a long-lived **Channel access token**.
+3. Enable **Use webhook** and set the URL to
+   `{PUBLIC_BASE_URL}/line/webhook` (or call `/admin/set-line-webhook` after deploy).
+4. Disable auto-reply and greeting messages in the console (avoids double replies).
+5. Add the bot as a friend on your LINE account to test.
+
+## Local dev
+
+```bash
+npm run dev
+```
+
+For Telegram/LINE webhooks locally, expose the dev server with a tunnel
+(`wrangler dev --remote` or ngrok) and point webhooks at the tunnel URL.
+
+## Tests
+
+```bash
+npm test
+npm run typecheck
+```
 
 ## Layout
 
 ```
-src/entry.py          Workers entrypoint (raw fetch router)
-src/app/worker_app.py D1 + OpenAI + Telegram business logic
-src/app/channels/     Telegram httpx adapter
-migrations/           D1 SQL migrations
-wrangler.toml         Worker + D1 binding
-pyproject.toml        Slim Workers dependencies (~2 MB gzip)
+src/index.ts           Worker entry (webhooks + admin routes)
+src/channels/          Telegram + LINE adapters
+src/handlers/          Dispatcher, commands, photo, confirmation
+src/agents/            LangGraph coach + vision
+src/db/                D1 queries
+migrations/            D1 SQL migrations
+wrangler.toml          Worker + D1 binding
 ```
 
 ## Config
@@ -78,17 +106,10 @@ pyproject.toml        Slim Workers dependencies (~2 MB gzip)
 | Var | Purpose |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | BotFather token (secret) |
-| `TELEGRAM_WEBHOOK_SECRET` | Webhook header verification (secret) |
-| `OPENAI_API_KEY` | Chat + vision (secret) |
-| `PUBLIC_BASE_URL` | HTTPS base for webhook registration |
-| `OPENAI_MODEL` / `OPENAI_VISION_MODEL` | Defaults `gpt-4o` |
-
-## Size note
-
-Cloudflare Free Worker limit is **3 MB gzip**. Keep dependencies in
-`pyproject.toml` minimal. Re-check with:
-
-```bash
-uv run pywrangler sync
-python3 scripts/measure_worker_bundle.py
-```
+| `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook header (secret) |
+| `LINE_CHANNEL_SECRET` | LINE webhook HMAC secret (secret) |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API token (secret) |
+| `OPENROUTER_API_KEY` | Chat + vision (secret) |
+| `PUBLIC_BASE_URL` | HTTPS base for webhook URLs |
+| `ADMIN_SECRET` | Protects `/admin/*` routes (secret) |
+| `OPENROUTER_MODEL` / `OPENROUTER_VISION_MODEL` | Defaults `openai/gpt-4o` |
