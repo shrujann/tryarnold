@@ -1,0 +1,76 @@
+export interface InboundPhoto {
+  fileId: string;
+  fileUniqueId: string;
+  width?: number;
+  height?: number;
+  messageId?: string;
+}
+
+export interface InboundMessage {
+  channel: string;
+  externalUserId: string;
+  chatId: string | number;
+  text?: string | null;
+  photo?: InboundPhoto | null;
+  caption?: string | null;
+  username?: string | null;
+  firstName?: string | null;
+  callbackData?: string | null;
+  callbackQueryId?: string | null;
+  replyToken?: string | null;
+  timestamp?: Date;
+  raw?: unknown;
+}
+
+export type ButtonRow = Array<{ label: string; data: string }>;
+
+export interface DownloadedImage {
+  bytes: Uint8Array;
+  mime: string;
+}
+
+export interface MessagingChannel {
+  readonly name: string;
+  readonly enabled: boolean;
+  sendText(chatId: string | number, text: string): Promise<void>;
+  sendTextWithKeyboard(
+    chatId: string | number,
+    text: string,
+    buttons: ButtonRow[],
+  ): Promise<void>;
+  answerCallback?(callbackQueryId: string): Promise<void>;
+  downloadPhoto(fileId: string): Promise<DownloadedImage>;
+  parseUpdate(update: unknown): InboundMessage | InboundMessage[] | null;
+}
+
+export function hasPhoto(msg: InboundMessage): boolean {
+  return msg.photo != null;
+}
+
+export function isCallback(msg: InboundMessage): boolean {
+  return msg.callbackData != null;
+}
+
+export function displayText(msg: InboundMessage): string {
+  return msg.text || msg.caption || "";
+}
+
+export function detectMime(contentType: string | null, filePath?: string): string {
+  if (contentType) {
+    const base = contentType.split(";")[0]?.trim().toLowerCase();
+    if (base?.startsWith("image/")) return base;
+  }
+  if (filePath) {
+    const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+    const map: Record<string, string> = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      gif: "image/gif",
+      heic: "image/heic",
+    };
+    if (map[ext]) return map[ext];
+  }
+  return "image/jpeg";
+}

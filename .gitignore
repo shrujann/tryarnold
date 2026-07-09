@@ -1,3 +1,7 @@
+# Node / TypeScript
+node_modules/
+.npm/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -20,6 +24,7 @@ pylock.toml
 # Environment / secrets
 .env
 *.env
+.dev.vars
 !.env.example
 
 # Databases / local data

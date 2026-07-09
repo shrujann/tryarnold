@@ -1,7 +1,7 @@
 name = "tryarnold"
-main = "src/entry.py"
+main = "src/index.ts"
 compatibility_date = "2025-10-16"
-compatibility_flags = ["python_workers"]
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
@@ -11,5 +11,12 @@ migrations_dir = "migrations"
 
 [vars]
 APP_RUNTIME = "worker"
-# Set after deploy, then redeploy (or set via dashboard):
+APP_NAME = "telegram-fitness-coach"
 PUBLIC_BASE_URL = "https://tryarnold.shrujan-beesetty.workers.dev"
+OPENROUTER_MODEL = "openai/gpt-4o"
+OPENROUTER_VISION_MODEL = "openai/gpt-4o"
+PORTION_CONFIDENCE_THRESHOLD = "0.6"
+MEAL_CONFIRM_MAX_CALORIES = "1200"
+PENDING_MEAL_TTL_MINUTES = "30"
+PORTION_SIZE_SMALL = "0.7"
+PORTION_SIZE_LARGE = "1.3"

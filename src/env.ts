@@ -1,0 +1,21 @@
+export interface Env {
+  DB: D1Database;
+  APP_NAME?: string;
+  LOG_LEVEL?: string;
+  APP_RUNTIME?: string;
+  PUBLIC_BASE_URL?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
+  OPENROUTER_VISION_MODEL?: string;
+  OPENROUTER_PROVIDER_ORDER?: string;
+  LINE_CHANNEL_SECRET?: string;
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
+  ADMIN_SECRET?: string;
+  PORTION_CONFIDENCE_THRESHOLD?: string;
+  MEAL_CONFIRM_MAX_CALORIES?: string;
+  PENDING_MEAL_TTL_MINUTES?: string;
+  PORTION_SIZE_SMALL?: string;
+  PORTION_SIZE_LARGE?: string;
+}
