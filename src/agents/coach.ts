@@ -24,6 +24,7 @@ export async function runCoachAgent(
 
   const systemPrompt = `You are a concise fitness coach on messaging apps. No emojis. Keep replies short.
 Use tools when the user asks about progress, recent meals, or wants to log what they ate.
+When targets are in CONTEXT, compare today's intake to targets and mention remaining calories/macros when relevant.
 Ask clarifying questions when needed.
 
 CONTEXT:

@@ -41,6 +41,27 @@ describe("getOrCreateUser", () => {
       null,
       "2026-07-09T00:00:00Z",
     );
-    expect(user).toMatchObject({ id: 7, channel: "line", external_user_id: "U123" });
+    expect(user).toMatchObject({
+      id: 7,
+      channel: "line",
+      external_user_id: "U123",
+    });
+  });
+
+  it("insert leaves onboarding_step null until /start", async () => {
+    vi.mocked(dbFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 1, onboarding_step: null, onboarded: 0 } as never);
+
+    await getOrCreateUser({} as D1Database, {
+      channel: "telegram",
+      externalUserId: "99",
+      chatId: 99,
+    });
+
+    const insertCall = vi.mocked(dbRun).mock.calls[0];
+    expect(insertCall?.[1]).toContain("onboarding_step");
+    expect(insertCall?.[1]).toContain("NULL");
+    expect(insertCall?.[1]).not.toContain("'unit'");
   });
 });

@@ -2,6 +2,7 @@ import type { Env } from "../env";
 import { getSettings } from "../config";
 import type { InboundMessage, MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
+import { getDailyProgress } from "../db/users";
 import { insertPendingMeal } from "../db/pending-meals";
 import { applyMultiplier, needsPortionConfirm } from "../schemas/nutrition";
 import { estimateFromImage } from "../agents/vision";
@@ -72,8 +73,17 @@ export async function handlePhoto(
     let prompt: string;
     let buttons: Array<Array<{ label: string; data: string }>>;
 
+    let remainingSuffix = "";
+    if (Number(user.onboarded) === 1) {
+      const progress = await getDailyProgress(db, user);
+      if (progress.remaining_calories != null) {
+        const left = Math.round(progress.remaining_calories - estimate.calories);
+        remainingSuffix = ` (${left} kcal left after this)`;
+      }
+    }
+
     if (needsPortionConfirm(estimate, settings.portionConfidenceThreshold)) {
-      prompt = `${summary} - around ${Math.round(estimate.calories)} kcal (${macros}), but portion's unclear. how big was it?`;
+      prompt = `${summary} - around ${Math.round(estimate.calories)} kcal (${macros}), but portion's unclear. how big was it?${remainingSuffix}`;
       buttons = [
         [
           { label: "Small", data: "meal:size_s" },
@@ -83,7 +93,7 @@ export async function handlePhoto(
         [{ label: "Skip", data: "meal:skip" }],
       ];
     } else {
-      prompt = `${summary} - ~${Math.round(estimate.calories)} kcal (${macros}). tap to log or adjust.`;
+      prompt = `${summary} - ~${Math.round(estimate.calories)} kcal (${macros}). tap to log or adjust.${remainingSuffix}`;
       buttons = [
         [
           { label: "Log", data: "meal:log" },

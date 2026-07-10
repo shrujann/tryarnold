@@ -1,20 +1,28 @@
 import type { MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
-import { dailyTotals } from "../db/users";
+import { getDailyProgress, updateOnboardingStep } from "../db/users";
 import { getLastMeal } from "../db/meals";
+import { hasStartedOnboarding } from "../services/onboarding";
 import { stripEmoji } from "../services/text-style";
+import { presentOnboardingStep, startOnboarding } from "./onboarding";
 
 export const HELP =
   "how this works:\n" +
+  "- /start - set up or resume your calorie targets\n" +
   "- text me what you ate or send a food photo\n" +
-  "- /progress - today's summary\n" +
+  "- /progress - today's summary vs your targets\n" +
+  "- /setup - redo calorie and macro setup\n" +
   "- /last-analysis - last logged meal\n" +
   "- /help - this message\n\n" +
   "note: proactive check-ins, pdf reports, and fatsecret are not on this worker.";
 
 export const WELCOME =
   "hey, i'm your fitness coach. text meals or send food pics and i'll track " +
-  "them.\n\nwhat's the main goal right now?";
+  "them.\n\nuse /progress for today's totals or /setup to change your targets.";
+
+function isOnboarded(user: UserRow): boolean {
+  return Number(user.onboarded) === 1;
+}
 
 async function sendOut(
   channel: MessagingChannel,
@@ -31,6 +39,28 @@ async function sendOut(
   await logMessage(db, userId, "out", cleaned, channelName);
 }
 
+function formatProgress(user: UserRow, progress: Awaited<ReturnType<typeof getDailyProgress>>): string {
+  const base =
+    `today: ${Math.round(progress.calories)} kcal, ` +
+    `P${Math.round(progress.protein_g)}g ` +
+    `C${Math.round(progress.carbs_g)}g ` +
+    `F${Math.round(progress.fat_g)}g, ` +
+    `${progress.meals} meal(s)`;
+
+  if (progress.target_calories == null) return base;
+
+  const remaining = progress.remaining_calories ?? 0;
+  const sign = remaining >= 0 ? "" : "+";
+  const absRemaining = Math.abs(Math.round(remaining));
+
+  return (
+    `${base}\n` +
+    `targets: ${progress.target_calories} kcal, ` +
+    `P${progress.target_protein_g}g C${progress.target_carbs_g}g F${progress.target_fat_g}g\n` +
+    `${sign}${absRemaining} kcal ${remaining >= 0 ? "left" : "over"} today`
+  );
+}
+
 export async function handleCommand(
   channel: MessagingChannel,
   db: D1Database,
@@ -42,32 +72,39 @@ export async function handleCommand(
   const cmd = text.split(/\s+/)[0]!.toLowerCase().replace(/^\//, "").split("@")[0]!;
   const userId = user.id;
 
-  if (cmd === "start" || cmd === "help") {
-    await sendOut(
-      channel,
-      db,
-      chatId,
-      userId,
-      channel.name,
-      cmd === "help" ? HELP : WELCOME,
-      replyToken,
-    );
+  if (cmd === "start") {
+    if (!isOnboarded(user)) {
+      let activeUser = user;
+      if (!hasStartedOnboarding(user)) {
+        await updateOnboardingStep(db, userId, { onboarding_step: "unit" });
+        activeUser = { ...user, onboarding_step: "unit" };
+      }
+      await presentOnboardingStep(channel, db, chatId, activeUser, replyToken);
+    } else {
+      await sendOut(channel, db, chatId, userId, channel.name, WELCOME, replyToken);
+    }
+    return true;
+  }
+
+  if (cmd === "setup") {
+    await startOnboarding(channel, db, chatId, user, replyToken);
+    return true;
+  }
+
+  if (cmd === "help") {
+    await sendOut(channel, db, chatId, userId, channel.name, HELP, replyToken);
     return true;
   }
 
   if (cmd === "progress") {
-    const totals = await dailyTotals(db, user);
+    const progress = await getDailyProgress(db, user);
     await sendOut(
       channel,
       db,
       chatId,
       userId,
       channel.name,
-      `today: ${Math.round(totals.calories)} kcal, ` +
-        `P${Math.round(totals.protein_g)}g ` +
-        `C${Math.round(totals.carbs_g)}g ` +
-        `F${Math.round(totals.fat_g)}g, ` +
-        `${totals.meals} meal(s)`,
+      formatProgress(user, progress),
       replyToken,
     );
     return true;
