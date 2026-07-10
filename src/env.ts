@@ -18,4 +18,6 @@ export interface Env {
   PENDING_MEAL_TTL_MINUTES?: string;
   PORTION_SIZE_SMALL?: string;
   PORTION_SIZE_LARGE?: string;
+  TELEGRAM_BOT_URL?: string;
+  LINE_ADD_URL?: string;
 }

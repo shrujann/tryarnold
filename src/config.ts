@@ -24,6 +24,8 @@ export interface Settings {
   webhookUrl: string;
   lineWebhookUrl: string;
   aiEnabled: boolean;
+  telegramBotUrl: string;
+  lineAddUrl: string;
 }
 
 function envStr(env: Env, key: keyof Env, fallback?: string): string | undefined {
@@ -73,5 +75,7 @@ export function getSettings(env: Env): Settings {
     webhookUrl: `${publicBaseUrl.replace(/\/$/, "")}${webhookPath}`,
     lineWebhookUrl: `${publicBaseUrl.replace(/\/$/, "")}${lineWebhookPath}`,
     aiEnabled: Boolean(envStr(env, "OPENROUTER_API_KEY")),
+    telegramBotUrl: envStr(env, "TELEGRAM_BOT_URL", "#") ?? "#",
+    lineAddUrl: envStr(env, "LINE_ADD_URL", "#") ?? "#",
   };
 }
