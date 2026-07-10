@@ -6,6 +6,7 @@ import {
   processLineWebhook,
   processTelegramUpdate,
 } from "./handlers/dispatcher";
+import { renderLandingPage } from "./landing/page";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -177,6 +178,12 @@ export default {
             502,
           );
         }
+      }
+
+      if (method === "GET" && (path === "/" || path === "/index.html")) {
+        return new Response(renderLandingPage(settings), {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
       }
 
       return jsonResponse({ detail: "not found" }, 404);
