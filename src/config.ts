@@ -75,7 +75,11 @@ export function getSettings(env: Env): Settings {
     webhookUrl: `${publicBaseUrl.replace(/\/$/, "")}${webhookPath}`,
     lineWebhookUrl: `${publicBaseUrl.replace(/\/$/, "")}${lineWebhookPath}`,
     aiEnabled: Boolean(envStr(env, "OPENROUTER_API_KEY")),
-    telegramBotUrl: envStr(env, "TELEGRAM_BOT_URL", "#") ?? "#",
-    lineAddUrl: envStr(env, "LINE_ADD_URL", "#") ?? "#",
+    telegramBotUrl:
+      envStr(env, "TELEGRAM_BOT_URL", "https://t.me/tryarnold_bot") ??
+      "https://t.me/tryarnold_bot",
+    lineAddUrl:
+      envStr(env, "LINE_ADD_URL", "https://line.me/R/ti/p/@386edctb") ??
+      "https://line.me/R/ti/p/@386edctb",
   };
 }

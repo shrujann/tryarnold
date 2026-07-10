@@ -68,9 +68,8 @@ describe("handleConfirmation D1 flow", () => {
       user_id: 1,
       estimate_json: JSON.stringify(estimate),
       base_multiplier: 1,
-      tg_file_id: "f1",
-      tg_file_unique_id: "fu1",
       media_ref: "f1",
+      media_unique_ref: "fu1",
       photo_caption: null,
       created_at: new Date().toISOString(),
     });

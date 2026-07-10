@@ -17,8 +17,8 @@ export async function insertMeal(
     db,
     `INSERT INTO meals (
       user_id, ts, source, description, calories, protein_g, carbs_g, fat_g,
-      confidence, items_json, tg_file_id, tg_file_unique_id, media_ref, photo_caption
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      confidence, items_json, media_ref, media_unique_ref, photo_caption
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     userId,
     utcNow(),
     source,
@@ -31,7 +31,6 @@ export async function insertMeal(
     JSON.stringify(estimate.items),
     mediaRef ?? null,
     mediaUniqueRef ?? null,
-    mediaRef ?? null,
     photoCaption ?? null,
   );
 }

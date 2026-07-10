@@ -16,14 +16,13 @@ describe("getOrCreateUser", () => {
     vi.clearAllMocks();
   });
 
-  it("creates LINE users without requiring telegram_id", async () => {
+  it("creates LINE users with channel + external_user_id", async () => {
     vi.mocked(dbFirst)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: 7,
         channel: "line",
         external_user_id: "U123",
-        telegram_id: null,
       } as never);
 
     const user = await getOrCreateUser({} as D1Database, {
@@ -36,7 +35,6 @@ describe("getOrCreateUser", () => {
     expect(dbRun).toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining("INSERT INTO users"),
-      null,
       "line",
       "U123",
       null,

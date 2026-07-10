@@ -99,8 +99,8 @@ export async function handleConfirmation(
     userId,
     source: "photo",
     estimate,
-    mediaRef: pending.media_ref ?? pending.tg_file_id,
-    mediaUniqueRef: pending.tg_file_unique_id,
+    mediaRef: pending.media_ref,
+    mediaUniqueRef: pending.media_unique_ref,
     photoCaption: pending.photo_caption,
   });
 

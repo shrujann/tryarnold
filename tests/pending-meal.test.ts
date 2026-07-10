@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAction, normalizeActionWithSettings } from "../src/services/pending-meal";
+import { normalizeActionWithSettings } from "../src/services/pending-meal";
 import { getSettings } from "../src/config";
 import type { Env } from "../src/env";
 
@@ -10,19 +10,19 @@ const mockEnv = {
 
 const settings = getSettings(mockEnv);
 
-describe("normalizeAction", () => {
+describe("normalizeActionWithSettings", () => {
   it("parses meal: prefixed callbacks", () => {
-    expect(normalizeAction("meal:log")).toBe("log");
-    expect(normalizeAction("meal:size_s")).toBe("s");
-    expect(normalizeAction("meal:skip")).toBe("skip");
+    expect(normalizeActionWithSettings("meal:log", settings)).toBe("log");
+    expect(normalizeActionWithSettings("meal:size_s", settings)).toBe("s");
+    expect(normalizeActionWithSettings("meal:skip", settings)).toBe("skip");
   });
 
   it("returns null for unknown actions", () => {
-    expect(normalizeAction("meal:unknown")).toBeNull();
-    expect(normalizeAction("hello")).toBeNull();
+    expect(normalizeActionWithSettings("meal:unknown", settings)).toBeNull();
+    expect(normalizeActionWithSettings("hello", settings)).toBeNull();
   });
 
-  it("works with settings-aware variant", () => {
+  it("normalizes case and plain tokens", () => {
     expect(normalizeActionWithSettings("meal:bigger", settings)).toBe("bigger");
     expect(normalizeActionWithSettings("BIGGER", settings)).toBe("bigger");
   });

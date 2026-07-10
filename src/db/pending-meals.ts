@@ -6,9 +6,8 @@ export interface PendingMealRow {
   user_id: number;
   estimate_json: string;
   base_multiplier: number;
-  tg_file_id?: string | null;
-  tg_file_unique_id?: string | null;
   media_ref?: string | null;
+  media_unique_ref?: string | null;
   photo_caption?: string | null;
   created_at: string;
 }
@@ -34,15 +33,14 @@ export async function insertPendingMeal(
   await dbRun(
     db,
     `INSERT INTO pending_meals (
-      user_id, estimate_json, base_multiplier, tg_file_id, tg_file_unique_id,
-      media_ref, photo_caption, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      user_id, estimate_json, base_multiplier, media_ref, media_unique_ref,
+      photo_caption, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     userId,
     JSON.stringify(estimate),
     baseMultiplier,
     mediaRef ?? null,
     mediaUniqueRef ?? null,
-    mediaRef ?? null,
     photoCaption ?? null,
     utcNow(),
   );

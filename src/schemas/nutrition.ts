@@ -26,6 +26,30 @@ export const macroEstimateSchema = z.object({
 export type FoodItem = z.infer<typeof foodItemSchema>;
 export type MacroEstimate = z.infer<typeof macroEstimateSchema>;
 
+/** Strict schema for LLM structured output (all macro fields required). */
+export const strictFoodItemSchema = z.object({
+  name: z.string(),
+  quantity: z.string().nullable().optional(),
+  plate_share: z.number().nullable().optional(),
+  calories: z.number(),
+  protein_g: z.number(),
+  carbs_g: z.number(),
+  fat_g: z.number(),
+});
+
+export const strictMacroEstimateSchema = z.object({
+  items: z.array(strictFoodItemSchema),
+  calories: z.number(),
+  protein_g: z.number(),
+  carbs_g: z.number(),
+  fat_g: z.number(),
+  confidence: z.number(),
+  food_confidence: z.number(),
+  portion_confidence: z.number(),
+  assumptions: z.array(z.string()),
+  description: z.string(),
+});
+
 export function normalizeMacroEstimate(raw: MacroEstimate): MacroEstimate {
   const estimate = { ...raw };
   if (estimate.food_confidence || estimate.portion_confidence) {
@@ -41,8 +65,6 @@ export function macroEstimateFromDict(payload: unknown): MacroEstimate {
   const parsed = macroEstimateSchema.parse(payload);
   return normalizeMacroEstimate(parsed);
 }
-
-export const macroEstimateFromJson = macroEstimateFromDict;
 
 export function needsPortionConfirm(
   estimate: MacroEstimate,

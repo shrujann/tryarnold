@@ -3,7 +3,6 @@ import { dbAll, dbFirst, dbRun, startOfDayInTimezone, utcNow } from "./client";
 
 export interface UserRow {
   id: number;
-  telegram_id?: number | null;
   channel?: string | null;
   external_user_id?: string | null;
   username?: string | null;
@@ -35,21 +34,6 @@ export async function getOrCreateUser(
     ),
   );
 
-  if (!row && channel === "telegram") {
-    row = asUser(
-      await dbFirst(db, "SELECT * FROM users WHERE telegram_id = ?", Number(externalId)),
-    );
-    if (row) {
-      await dbRun(
-        db,
-        "UPDATE users SET channel = ?, external_user_id = ? WHERE id = ?",
-        channel,
-        externalId,
-        row.id,
-      );
-    }
-  }
-
   if (row) {
     if (msg.username && row.username !== msg.username) {
       await dbRun(
@@ -68,11 +52,10 @@ export async function getOrCreateUser(
   await dbRun(
     db,
     `INSERT INTO users (
-      telegram_id, channel, external_user_id, username, first_name,
+      channel, external_user_id, username, first_name,
       timezone, nudges_enabled, consent_health_data, phone_verified,
       onboarded, portion_multiplier, created_at
-    ) VALUES (?, ?, ?, ?, ?, 'UTC', 1, 0, 0, 0, 1.0, ?)`,
-    channel === "telegram" ? Number(externalId) : null,
+    ) VALUES (?, ?, ?, ?, 'UTC', 1, 0, 0, 0, 1.0, ?)`,
     channel,
     externalId,
     msg.username ?? null,

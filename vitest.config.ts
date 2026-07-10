@@ -16,7 +16,7 @@ const workersConfig = defineWorkersConfig({
     name: "workers",
     globals: true,
     include: ["tests/**/*.test.ts"],
-    exclude: ["tests/agents.test.ts"],
+    exclude: ["tests/agents.test.ts", "tests/webhooks.test.ts"],
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.toml" },
@@ -32,7 +32,7 @@ export default defineConfig({
       {
         test: {
           name: "node",
-          include: ["tests/agents.test.ts"],
+          include: ["tests/agents.test.ts", "tests/webhooks.test.ts"],
           environment: "node",
         },
       },
