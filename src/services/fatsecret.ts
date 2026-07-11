@@ -1,5 +1,11 @@
 import type { Settings } from "../config";
 import type { FoodItem, MacroEstimate } from "../schemas/nutrition";
+import { normalizePortionEstimate } from "../schemas/nutrition";
+import {
+  buildClarifyPrefetchCandidates,
+  type ClarifyPlan,
+} from "./clarification";
+import { expandCompoundItems } from "./item-split";
 import { createLogger } from "./logger";
 
 export const FATSECRET_API_URL = "https://platform.fatsecret.com/rest/server.api";
@@ -9,6 +15,9 @@ export const FATSECRET_ATTRIBUTION_TELEGRAM =
 
 export const FATSECRET_ATTRIBUTION_LINE =
   "\n\nPowered by fatsecret Platform API — https://platform.fatsecret.com";
+
+export const WEIGHT_UNCERTAIN_ASSUMPTION =
+  "Weight may not be accurate for this dish";
 
 export interface FatSecretServing {
   serving_id: string;
@@ -180,8 +189,57 @@ export function parseFoodGetResponse(body: unknown): FatSecretFood | null {
   return parseFood(food);
 }
 
-export function pickServing(servings: FatSecretServing[]): FatSecretServing | null {
+export function servingMetricAmount(
+  serving: FatSecretServing,
+): { amount: number; unit: "g" | "ml" } | null {
+  const amount = parseFloat(serving.metric_serving_amount ?? "");
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const unitRaw = (serving.metric_serving_unit ?? "g").toLowerCase();
+  if (unitRaw === "ml" || unitRaw === "milliliter" || unitRaw === "millilitre") {
+    return { amount, unit: "ml" };
+  }
+  if (unitRaw === "g" || unitRaw === "gram" || unitRaw === "grams") {
+    return { amount, unit: "g" };
+  }
+  return { amount, unit: "g" };
+}
+
+export function pickServing(
+  servings: FatSecretServing[],
+  item?: FoodItem,
+): FatSecretServing | null {
   if (!servings.length) return null;
+
+  const visionWeight = item?.weight_g ?? 0;
+  const visionVolume = item?.volume_ml ?? 0;
+
+  if (visionWeight > 0 || visionVolume > 0) {
+    const candidates: Array<{ serving: FatSecretServing; delta: number }> = [];
+    const preferWeight = visionWeight > 0;
+
+    for (const serving of servings) {
+      const metric = servingMetricAmount(serving);
+      if (!metric) continue;
+
+      if (preferWeight && metric.unit === "g") {
+        candidates.push({
+          serving,
+          delta: Math.abs(visionWeight - metric.amount),
+        });
+      } else if (!preferWeight && visionVolume > 0 && metric.unit === "ml") {
+        candidates.push({
+          serving,
+          delta: Math.abs(visionVolume - metric.amount),
+        });
+      }
+    }
+
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => a.delta - b.delta);
+      return candidates[0]!.serving;
+    }
+  }
 
   const hundredG = servings.find((s) => {
     const amount = parseFloat(s.metric_serving_amount ?? "");
@@ -220,47 +278,86 @@ function servingToItemMacros(
   };
 }
 
+function isLiquidItem(item: FoodItem): boolean {
+  return /milk|coffee|tea|latte|espresso|juice|water|cream|soda|cola|drink/i.test(
+    item.name,
+  );
+}
+
+function visionPortionAmount(item: FoodItem): number | null {
+  const hasVolume = item.volume_ml != null && item.volume_ml > 0;
+  if (item.weight_g === 0 && !hasVolume) {
+    if (/ice|garnish|water\b/i.test(item.name)) return 0;
+    return null;
+  }
+  if (item.weight_g > 0) return item.weight_g;
+  if (hasVolume) return item.volume_ml!;
+  return null;
+}
+
+function visionToServingRatio(
+  item: FoodItem,
+  metric: { amount: number; unit: "g" | "ml" },
+): number | null {
+  if (metric.amount <= 0) return null;
+
+  if (metric.unit === "g" && item.weight_g > 0) {
+    return item.weight_g / metric.amount;
+  }
+
+  if (metric.unit === "ml") {
+    const ml =
+      item.volume_ml != null && item.volume_ml > 0
+        ? item.volume_ml
+        : isLiquidItem(item)
+          ? item.weight_g
+          : 0;
+    if (ml > 0) return ml / metric.amount;
+  }
+
+  if (metric.unit === "g" && isLiquidItem(item) && item.volume_ml != null && item.volume_ml > 0) {
+    return item.volume_ml / metric.amount;
+  }
+
+  return null;
+}
+
+function scaleFsMacros(
+  fatsecret: Pick<FoodItem, "calories" | "protein_g" | "carbs_g" | "fat_g">,
+  ratio: number,
+): Pick<FoodItem, "calories" | "protein_g" | "carbs_g" | "fat_g"> {
+  const clamped = Math.min(Math.max(ratio, 0), 10);
+  return {
+    calories: roundMacro(fatsecret.calories * clamped),
+    protein_g: roundMacro(fatsecret.protein_g * clamped),
+    carbs_g: roundMacro(fatsecret.carbs_g * clamped),
+    fat_g: roundMacro(fatsecret.fat_g * clamped),
+  };
+}
+
 /**
- * FatSecret returns database serving sizes (often 100 g). Vision estimates the
- * actual portion on the plate. Scale FS macros to match vision item calories
- * when both are available; keep vision when FS serving is zero-calorie.
+ * Scale FatSecret macros by vision portion (weight_g / volume_ml).
+ * Vision supplies physical amount; FatSecret supplies per-serving nutrition.
  */
 export function blendItemMacrosWithVision(
   item: FoodItem,
   fatsecret: Pick<FoodItem, "calories" | "protein_g" | "carbs_g" | "fat_g">,
+  serving?: FatSecretServing,
 ): Pick<FoodItem, "calories" | "protein_g" | "carbs_g" | "fat_g"> {
-  const visionCal = item.calories;
-  const fsCal = fatsecret.calories;
-
-  if (fsCal <= 0 && visionCal > 0) {
-    return {
-      calories: roundMacro(visionCal),
-      protein_g: roundMacro(item.protein_g),
-      carbs_g: roundMacro(item.carbs_g),
-      fat_g: roundMacro(item.fat_g),
-    };
+  const portion = visionPortionAmount(item);
+  if (portion === 0) {
+    return { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
   }
 
-  if (visionCal <= 0 || fsCal <= 0) {
-    return fatsecret;
+  const metric = serving ? servingMetricAmount(serving) : null;
+  if (portion != null && portion > 0 && metric) {
+    const ratio = visionToServingRatio(item, metric);
+    if (ratio != null && ratio > 0) {
+      return scaleFsMacros(fatsecret, ratio);
+    }
   }
 
-  const ratio = visionCal / fsCal;
-  if (ratio > 0 && ratio <= 10) {
-    return {
-      calories: roundMacro(fatsecret.calories * ratio),
-      protein_g: roundMacro(fatsecret.protein_g * ratio),
-      carbs_g: roundMacro(fatsecret.carbs_g * ratio),
-      fat_g: roundMacro(fatsecret.fat_g * ratio),
-    };
-  }
-
-  return {
-    calories: roundMacro(visionCal),
-    protein_g: roundMacro(item.protein_g),
-    carbs_g: roundMacro(item.carbs_g),
-    fat_g: roundMacro(item.fat_g),
-  };
+  return fatsecret;
 }
 
 function sumItems(items: FoodItem[]): Pick<
@@ -278,6 +375,48 @@ function sumItems(items: FoodItem[]): Pick<
   );
 }
 
+/** Scale item P/C/F to match meal-level vision macros; keep per-item calories. */
+export function reconcileItemMacrosToMeal(
+  items: FoodItem[],
+  mealMacros: Pick<MacroEstimate, "protein_g" | "carbs_g" | "fat_g">,
+): FoodItem[] {
+  const totals = sumItems(items);
+  const fields: Array<keyof Pick<MacroEstimate, "protein_g" | "carbs_g" | "fat_g">> = [
+    "protein_g",
+    "carbs_g",
+    "fat_g",
+  ];
+
+  const scaled = items.map((item) => {
+    const next = { ...item };
+    for (const field of fields) {
+      const itemTotal = totals[field];
+      const target = mealMacros[field];
+      if (itemTotal <= 0 || target <= 0) {
+        next[field] = item[field];
+        continue;
+      }
+      next[field] = roundMacro(item[field] * (target / itemTotal));
+    }
+    return next;
+  });
+
+  for (const field of fields) {
+    const target = mealMacros[field];
+    const sum = roundMacro(scaled.reduce((acc, item) => acc + item[field], 0));
+    const drift = roundMacro(target - sum);
+    if (drift !== 0 && scaled.length > 0) {
+      const last = scaled[scaled.length - 1]!;
+      scaled[scaled.length - 1] = {
+        ...last,
+        [field]: roundMacro(last[field] + drift),
+      };
+    }
+  }
+
+  return scaled;
+}
+
 async function callFatSecretApi(
   settings: Settings,
   apiParams: Record<string, string>,
@@ -293,6 +432,7 @@ async function callFatSecretApi(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
+    signal: AbortSignal.timeout(FATSECRET_FETCH_TIMEOUT_MS),
   });
 
   if (!resp.ok) {
@@ -397,6 +537,298 @@ export function hasFatSecretAssumption(assumptions: string[]): boolean {
   return assumptions.some((a) => a.startsWith("fatsecret:"));
 }
 
+export type FatSecretEnrichmentResult = {
+  estimate: MacroEstimate;
+  fatsecretUsed: boolean;
+};
+
+/** Cached FatSecret lookups for visible items + all clarify candidates. */
+export type FatSecretPrefetchCache = {
+  visibleItems: FoodItem[];
+  addOns: Record<string, FoodItem>;
+  assumptions: string[];
+  fatsecretUsed: boolean;
+};
+
+const FATSECRET_FETCH_TIMEOUT_MS = 12_000;
+
+async function enrichVisibleItemsForPrefetch(
+  scaledDraft: MacroEstimate,
+  settings: Settings,
+): Promise<{ items: FoodItem[]; fatsecretUsed: boolean; assumptions: string[] }> {
+  const logger = createLogger(settings.logLevel);
+  if (!settings.fatsecretEnabled || !(scaledDraft.items ?? []).length) {
+    return {
+      items: scaledDraft.items ?? [],
+      fatsecretUsed: false,
+      assumptions: [...scaledDraft.assumptions],
+    };
+  }
+
+  const { items, anyMatched, assumptions } = await enrichItemListWithFatSecret(
+    scaledDraft.items,
+    settings,
+    logger,
+    scaledDraft.assumptions,
+  );
+
+  return { items, fatsecretUsed: anyMatched, assumptions };
+}
+
+async function runClarifyFatSecretPrefetch(
+  scaledDraft: MacroEstimate,
+  plan: ClarifyPlan,
+  settings: Settings,
+): Promise<FatSecretPrefetchCache> {
+  const logger = createLogger(settings.logLevel);
+  const { addOns: candidates } = buildClarifyPrefetchCandidates(scaledDraft, plan);
+
+  const [visible, ...addOnResults] = await Promise.all([
+    enrichVisibleItemsForPrefetch(scaledDraft, settings),
+    ...candidates.map(async ({ key, item }) => {
+      const { items, anyMatched, assumptions } = await enrichItemListWithFatSecret(
+        [item],
+        settings,
+        logger,
+        [],
+      );
+      return { key, item: items[0] ?? item, anyMatched, assumptions };
+    }),
+  ]);
+
+  const addOnMap: Record<string, FoodItem> = {};
+  let fatsecretUsed = visible.fatsecretUsed;
+  const assumptions = [...visible.assumptions];
+
+  for (const result of addOnResults) {
+    addOnMap[result.key] = result.item;
+    if (result.anyMatched) {
+      fatsecretUsed = true;
+      for (const note of result.assumptions) {
+        if (!assumptions.includes(note)) assumptions.push(note);
+      }
+    }
+  }
+
+  return {
+    visibleItems: visible.items,
+    addOns: addOnMap,
+    assumptions,
+    fatsecretUsed,
+  };
+}
+
+/** Fetch FatSecret for visible items + all clarify toggle/exclusive candidates. */
+export async function fetchClarifyNutritionCache(
+  scaledDraft: MacroEstimate,
+  plan: ClarifyPlan,
+  settings: Settings,
+): Promise<FatSecretPrefetchCache> {
+  const logger = createLogger(settings.logLevel);
+  const started = Date.now();
+
+  const cache = await runClarifyFatSecretPrefetch(scaledDraft, plan, settings);
+
+  logger.info({
+    stage: "fatsecret_fetch",
+    fatsecretUsed: cache.fatsecretUsed,
+    visibleItems: cache.visibleItems.map((i) => i.name),
+    addOnKeys: Object.keys(cache.addOns),
+    durationMs: Date.now() - started,
+  });
+
+  return cache;
+}
+
+export function parseFatSecretPrefetch(
+  row: { fatsecret_prefetch_json?: string | null },
+): FatSecretPrefetchCache | null {
+  if (!row.fatsecret_prefetch_json) return null;
+  try {
+    const parsed = JSON.parse(row.fatsecret_prefetch_json);
+    if (parsed?.visibleItems && parsed?.addOns) {
+      return parsed as FatSecretPrefetchCache;
+    }
+    // Legacy shape stored full estimate — treat as visible-only cache.
+    if (parsed?.estimate?.items) {
+      return {
+        visibleItems: parsed.estimate.items,
+        addOns: {},
+        assumptions: parsed.estimate.assumptions ?? [],
+        fatsecretUsed: Boolean(parsed.fatsecretUsed),
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function assumptionsForItems(
+  allAssumptions: string[],
+  items: FoodItem[],
+): string[] {
+  const names = new Set(items.map((i) => i.name.toLowerCase()));
+  return allAssumptions.filter((note) => {
+    if (!note.startsWith("fatsecret:")) return true;
+    const body = note.slice("fatsecret:".length).toLowerCase();
+    return [...names].some((name) => body.includes(name));
+  });
+}
+
+/** Build final meal from prefetch cache + user selections only (no API calls). */
+export function assembleMealFromPrefetchCache(
+  scaledDraft: MacroEstimate,
+  selectedToggleIds: string[],
+  exclusiveChoiceId: string | null,
+  cache: FatSecretPrefetchCache,
+): FatSecretEnrichmentResult {
+  const items: FoodItem[] = [...cache.visibleItems];
+
+  for (const id of selectedToggleIds) {
+    const enriched = cache.addOns[id];
+    if (enriched) items.push({ ...enriched });
+  }
+
+  if (exclusiveChoiceId) {
+    const enriched = cache.addOns[`exclusive:${exclusiveChoiceId}`];
+    if (enriched) items.push({ ...enriched });
+  }
+
+  const totals = sumItems(items);
+  const mealAssumptions = assumptionsForItems(cache.assumptions, items);
+  const fatsecretUsed = mealAssumptions.some((a) => a.startsWith("fatsecret:"));
+
+  return {
+    estimate: normalizePortionEstimate({
+      ...scaledDraft,
+      ...totals,
+      items,
+      assumptions: mealAssumptions,
+      food_confidence: Math.max(
+        scaledDraft.food_confidence,
+        fatsecretUsed ? 0.85 : 0,
+      ),
+    }),
+    fatsecretUsed,
+  };
+}
+
+function applyFatSecretNutritionToItem(
+  item: FoodItem,
+  macros: Pick<FoodItem, "calories" | "protein_g" | "carbs_g" | "fat_g">,
+): FoodItem {
+  return {
+    ...item,
+    calories: macros.calories,
+    protein_g: macros.protein_g,
+    carbs_g: macros.carbs_g,
+    fat_g: macros.fat_g,
+  };
+}
+
+async function enrichItemListWithFatSecret(
+  items: FoodItem[],
+  settings: Settings,
+  logger: ReturnType<typeof createLogger>,
+  initialAssumptions: string[] = [],
+): Promise<{ items: FoodItem[]; anyMatched: boolean; assumptions: string[] }> {
+  const { items: expandedItems, splitNotes } = expandCompoundItems(items);
+  const assumptions = [...initialAssumptions, ...splitNotes];
+  let weightUncertain = false;
+
+  const results = await Promise.all(
+    expandedItems.map(async (item) => {
+      const searchExpression = buildSearchExpression(item);
+      if (!searchExpression) {
+        return {
+          item,
+          matched: false,
+          notes: [`nutrition: vision estimate (no fatsecret match for ${item.name})`] as string[],
+        };
+      }
+
+      try {
+        const result = await searchFoods(searchExpression, settings);
+        const topHit = result.foods[0];
+        if (!topHit || result.total_results <= 0) {
+          logger.warn({
+            stage: "fatsecret_response",
+            search_expression: searchExpression,
+            message: "no match, keeping vision macros",
+          });
+          return {
+            item,
+            matched: false,
+            notes: [`nutrition: vision estimate (no fatsecret match for ${item.name})`],
+          };
+        }
+
+        const topFood =
+          topHit.servings.length > 0
+            ? topHit
+            : (await getFoodById(topHit.food_id, settings)) ?? topHit;
+
+        const serving = pickServing(topFood.servings, item);
+        if (!serving) {
+          logger.warn({
+            stage: "fatsecret_response",
+            search_expression: searchExpression,
+            message: "no serving data, keeping vision macros",
+          });
+          return {
+            item,
+            matched: false,
+            notes: [`nutrition: vision estimate (no fatsecret match for ${item.name})`],
+          };
+        }
+
+        const fsMacros = servingToItemMacros(serving, item.plate_share);
+        const macros = blendItemMacrosWithVision(item, fsMacros, serving);
+        const notes = [`fatsecret: ${topFood.food_name} (${serving.serving_description})`];
+        if (visionPortionAmount(item) == null) {
+          weightUncertain = true;
+        }
+        return {
+          item: applyFatSecretNutritionToItem(item, macros),
+          matched: true,
+          notes,
+        };
+      } catch (err) {
+        logger.warn({
+          stage: "fatsecret_response",
+          search_expression: searchExpression,
+          message: "API error, keeping vision macros",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          item,
+          matched: false,
+          notes: [`nutrition: vision estimate (no fatsecret match for ${item.name})`],
+        };
+      }
+    }),
+  );
+
+  let anyMatched = false;
+  const enrichedItems: FoodItem[] = [];
+  for (const result of results) {
+    enrichedItems.push(result.item);
+    if (result.matched) {
+      anyMatched = true;
+    }
+    for (const note of result.notes) {
+      if (!assumptions.includes(note)) assumptions.push(note);
+    }
+  }
+
+  if (weightUncertain && !assumptions.includes(WEIGHT_UNCERTAIN_ASSUMPTION)) {
+    assumptions.push(WEIGHT_UNCERTAIN_ASSUMPTION);
+  }
+
+  return { items: enrichedItems, anyMatched, assumptions };
+}
+
 export async function enrichEstimateWithFatSecret(
   estimate: MacroEstimate,
   settings: Settings,
@@ -407,71 +839,24 @@ export async function enrichEstimateWithFatSecret(
     return { estimate, fatsecretUsed: false };
   }
 
-  let anyMatched = false;
-  const assumptions = [...estimate.assumptions];
-  const enrichedItems: FoodItem[] = [];
-
-  for (const item of estimate.items) {
-    const searchExpression = buildSearchExpression(item);
-    if (!searchExpression) {
-      enrichedItems.push(item);
-      continue;
-    }
-
-    try {
-      const result = await searchFoods(searchExpression, settings);
-      const topHit = result.foods[0];
-      if (!topHit || result.total_results <= 0) {
-        logger.warn({
-          stage: "fatsecret_response",
-          search_expression: searchExpression,
-          message: "no match, keeping vision macros",
-        });
-        enrichedItems.push(item);
-        continue;
-      }
-
-      const topFood =
-        topHit.servings.length > 0
-          ? topHit
-          : (await getFoodById(topHit.food_id, settings)) ?? topHit;
-
-      const serving = pickServing(topFood.servings);
-      if (!serving) {
-        logger.warn({
-          stage: "fatsecret_response",
-          search_expression: searchExpression,
-          message: "no serving data, keeping vision macros",
-        });
-        enrichedItems.push(item);
-        continue;
-      }
-
-      anyMatched = true;
-      const fsMacros = servingToItemMacros(serving, item.plate_share);
-      const macros = blendItemMacrosWithVision(item, fsMacros);
-      assumptions.push(`fatsecret: ${topFood.food_name} (${serving.serving_description})`);
-      enrichedItems.push({ ...item, ...macros });
-    } catch (err) {
-      logger.warn({
-        stage: "fatsecret_response",
-        search_expression: searchExpression,
-        message: "API error, keeping vision macros",
-        error: err instanceof Error ? err.message : String(err),
-      });
-      enrichedItems.push(item);
-    }
-  }
+  const { items: enrichedItems, anyMatched, assumptions } =
+    await enrichItemListWithFatSecret(
+      estimate.items,
+      settings,
+      logger,
+      estimate.assumptions,
+    );
 
   if (!anyMatched) {
     return { estimate, fatsecretUsed: false };
   }
 
-  const totals = sumItems(enrichedItems);
+  const finalItems = enrichedItems;
+  const totals = sumItems(finalItems);
   const enriched: MacroEstimate = {
     ...estimate,
     ...totals,
-    items: enrichedItems,
+    items: finalItems,
     assumptions,
     food_confidence: Math.max(estimate.food_confidence, 0.85),
   };

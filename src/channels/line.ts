@@ -26,7 +26,29 @@ export async function verifyLineSignature(
   return signature === expected;
 }
 
-/** Build Flex footer rows: one horizontal box per button row. */
+const MAX_QUICK_REPLY_ITEMS = 13;
+const MAX_QUICK_REPLY_LABEL = 20;
+
+/** Flatten button rows into LINE quick reply items (max 13). */
+export function buildQuickReplyItems(buttons: ButtonRow[]): unknown[] {
+  return buttons
+    .flat()
+    .slice(0, MAX_QUICK_REPLY_ITEMS)
+    .map((btn) => {
+      const fullLabel = stripEmoji(btn.label);
+      return {
+        type: "action",
+        action: {
+          type: "postback",
+          label: fullLabel.slice(0, MAX_QUICK_REPLY_LABEL),
+          data: btn.data,
+          displayText: fullLabel.slice(0, 300),
+        },
+      };
+    });
+}
+
+/** @deprecated Flex footers replaced by quick replies; kept for legacy tests. */
 export function buildFlexFooterContents(buttons: ButtonRow[]): unknown[] {
   return buttons.map((row) => ({
     type: "box",
@@ -116,40 +138,31 @@ export class LineChannel implements MessagingChannel {
     );
   }
 
+  async sendTextWithQuickReply(
+    chatId: string | number,
+    text: string,
+    buttons: ButtonRow[],
+    replyToken?: string | null,
+  ): Promise<number | null> {
+    const message: Record<string, unknown> = {
+      type: "text",
+      text: stripEmoji(text),
+    };
+    if (buttons.length > 0) {
+      message.quickReply = { items: buildQuickReplyItems(buttons) };
+    }
+    await this.replyOrPush(chatId, [message], replyToken);
+    return null;
+  }
+
   async sendTextWithKeyboard(
     chatId: string | number,
     text: string,
     buttons: ButtonRow[],
     replyToken?: string | null,
     _parseMode?: "HTML",
-  ): Promise<void> {
-    const flexMessage = {
-      type: "flex",
-      altText: stripEmoji(text).slice(0, 400),
-      contents: {
-        type: "bubble",
-        body: {
-          type: "box",
-          layout: "vertical",
-          contents: [
-            {
-              type: "text",
-              text: stripEmoji(text),
-              wrap: true,
-            },
-          ],
-        },
-        footer: {
-          type: "box",
-          layout: "vertical",
-          flex: 0,
-          spacing: "sm",
-          contents: buildFlexFooterContents(buttons),
-        },
-      },
-    };
-
-    await this.replyOrPush(chatId, [flexMessage], replyToken);
+  ): Promise<number | null> {
+    return this.sendTextWithQuickReply(chatId, text, buttons, replyToken);
   }
 
   async downloadPhoto(messageId: string): Promise<DownloadedImage> {

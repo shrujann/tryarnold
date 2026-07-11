@@ -3,6 +3,7 @@ import { z } from "zod";
 import { insertMeal } from "../../db/meals";
 import type { UserRow } from "../../db/users";
 import { macroEstimateSchema } from "../../schemas/nutrition";
+import { formatMealLoggedPlain } from "../../services/meal-format";
 
 const logMealSchema = macroEstimateSchema.extend({
   description: z.string().describe("Short meal description"),
@@ -17,7 +18,7 @@ export function createLogMealFromTextTool(db: D1Database, user: UserRow) {
         source: "text",
         estimate: parsed,
       });
-      return `logged ${parsed.description || "meal"} - ${Math.round(parsed.calories)} kcal`;
+      return formatMealLoggedPlain(parsed);
     },
     {
       name: "log_meal_from_text",

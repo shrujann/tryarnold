@@ -60,6 +60,14 @@ export class TelegramChannel implements MessagingChannel {
     return `https://api.telegram.org/file/bot${this.botToken}`;
   }
 
+  private isBenignTelegramError(description: string): boolean {
+    return (
+      description.includes("message is not modified") ||
+      description.includes("query is too old") ||
+      description.includes("query ID is invalid")
+    );
+  }
+
   private async call(method: string, payload: Record<string, unknown>): Promise<unknown> {
     const resp = await fetch(`${this.baseUrl}/${method}`, {
       method: "POST",
@@ -68,7 +76,11 @@ export class TelegramChannel implements MessagingChannel {
     });
     const data = (await resp.json()) as { ok?: boolean; result?: unknown; description?: string };
     if (!data.ok) {
-      throw new Error(data.description ?? `Telegram ${method} failed`);
+      const detail = data.description ?? `Telegram ${method} failed`;
+      if (this.isBenignTelegramError(detail)) {
+        return data.result ?? null;
+      }
+      throw new Error(detail);
     }
     return data.result;
   }
@@ -79,13 +91,41 @@ export class TelegramChannel implements MessagingChannel {
     _replyToken?: string | null,
     parseMode?: "HTML",
   ): Promise<void> {
+    await this.sendTextReturningId(chatId, text, parseMode);
+  }
+
+  async sendTextReturningId(
+    chatId: string | number,
+    text: string,
+    parseMode?: "HTML",
+  ): Promise<number | null> {
     const cleaned = stripEmoji(text);
-    for (const chunk of chunkText(cleaned, 4096)) {
+    const chunks = chunkText(cleaned, 4096);
+    let lastMessageId: number | null = null;
+    for (const chunk of chunks) {
       const payload: Record<string, unknown> = { chat_id: chatId, text: chunk };
       if (parseMode) {
         payload.parse_mode = parseMode;
       }
-      await this.call("sendMessage", payload);
+      const result = (await this.call("sendMessage", payload)) as {
+        message_id?: number;
+      };
+      lastMessageId = result.message_id ?? lastMessageId;
+    }
+    return lastMessageId;
+  }
+
+  async deleteMessage(
+    chatId: string | number,
+    messageId: string | number,
+  ): Promise<void> {
+    try {
+      await this.call("deleteMessage", {
+        chat_id: chatId,
+        message_id: Number(messageId),
+      });
+    } catch {
+      // Non-fatal if already deleted or too old.
     }
   }
 
@@ -95,7 +135,7 @@ export class TelegramChannel implements MessagingChannel {
     buttons: ButtonRow[],
     _replyToken?: string | null,
     parseMode?: "HTML",
-  ): Promise<void> {
+  ): Promise<number | null> {
     const replyMarkup = {
       inline_keyboard: buttons.map((row) =>
         row.map((btn) => ({ text: btn.label, callback_data: btn.data })),
@@ -109,12 +149,78 @@ export class TelegramChannel implements MessagingChannel {
     if (parseMode) {
       payload.parse_mode = parseMode;
     }
-    await this.call("sendMessage", payload);
+    const result = (await this.call("sendMessage", payload)) as {
+      message_id?: number;
+    };
+    return result.message_id ?? null;
   }
 
-  async answerCallback(callbackQueryId: string): Promise<void> {
+  async editMessageReplyMarkup(
+    chatId: string | number,
+    messageId: string | number,
+    buttons: ButtonRow[],
+  ): Promise<void> {
+    const replyMarkup = {
+      inline_keyboard: buttons.map((row) =>
+        row.map((btn) => ({ text: btn.label, callback_data: btn.data })),
+      ),
+    };
+    await this.call("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      reply_markup: replyMarkup,
+    });
+  }
+
+  async editMessageText(
+    chatId: string | number,
+    messageId: string | number,
+    text: string,
+    parseMode?: "HTML",
+    buttons?: ButtonRow[],
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      text: stripEmoji(text),
+    };
+    if (parseMode) {
+      payload.parse_mode = parseMode;
+    }
+    if (buttons) {
+      payload.reply_markup = {
+        inline_keyboard: buttons.map((row) =>
+          row.map((btn) => ({ text: btn.label, callback_data: btn.data })),
+        ),
+      };
+    }
+    await this.call("editMessageText", payload);
+  }
+
+  async clearMessageReplyMarkup(
+    chatId: string | number,
+    messageId: string | number,
+  ): Promise<void> {
+    await this.call("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+
+  async answerCallback(
+    callbackQueryId: string,
+    options?: { text?: string },
+  ): Promise<void> {
     try {
-      await this.call("answerCallbackQuery", { callback_query_id: callbackQueryId });
+      const payload: Record<string, unknown> = {
+        callback_query_id: callbackQueryId,
+      };
+      if (options?.text) {
+        payload.text = options.text;
+        payload.show_alert = false;
+      }
+      await this.call("answerCallbackQuery", payload);
     } catch {
       // Non-fatal: spinner may already be cleared
     }
@@ -175,6 +281,7 @@ export class TelegramChannel implements MessagingChannel {
         text: String(cb.data ?? ""),
         callbackData: String(cb.data ?? ""),
         callbackQueryId: String(cb.id ?? ""),
+        callbackMessageId: message.message_id ? Number(message.message_id) : null,
         username: fromUser.username ? String(fromUser.username) : null,
         firstName: fromUser.first_name ? String(fromUser.first_name) : null,
         raw: update,

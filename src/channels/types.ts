@@ -17,6 +17,7 @@ export interface InboundMessage {
   firstName?: string | null;
   callbackData?: string | null;
   callbackQueryId?: string | null;
+  callbackMessageId?: number | null;
   replyToken?: string | null;
   isFollow?: boolean;
   timestamp?: Date;
@@ -45,8 +46,39 @@ export interface MessagingChannel {
     buttons: ButtonRow[],
     replyToken?: string | null,
     parseMode?: "HTML",
+  ): Promise<number | string | null>;
+  sendTextWithQuickReply?(
+    chatId: string | number,
+    text: string,
+    buttons: ButtonRow[],
+    replyToken?: string | null,
+  ): Promise<number | string | null>;
+  editMessageReplyMarkup?(
+    chatId: string | number,
+    messageId: string | number,
+    buttons: ButtonRow[],
   ): Promise<void>;
-  answerCallback?(callbackQueryId: string): Promise<void>;
+  editMessageText?(
+    chatId: string | number,
+    messageId: string | number,
+    text: string,
+    parseMode?: "HTML",
+    buttons?: ButtonRow[],
+  ): Promise<void>;
+  clearMessageReplyMarkup?(
+    chatId: string | number,
+    messageId: string | number,
+  ): Promise<void>;
+  deleteMessage?(
+    chatId: string | number,
+    messageId: string | number,
+  ): Promise<void>;
+  /** Telegram-only: send plain text and return message_id for later deletion. */
+  sendTextReturningId?(
+    chatId: string | number,
+    text: string,
+  ): Promise<number | null>;
+  answerCallback?(callbackQueryId: string, options?: { text?: string }): Promise<void>;
   downloadPhoto(fileId: string): Promise<DownloadedImage>;
   parseUpdate(update: unknown): InboundMessage | InboundMessage[] | null;
 }

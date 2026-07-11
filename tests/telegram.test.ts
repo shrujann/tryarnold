@@ -78,3 +78,61 @@ describe("TelegramChannel.downloadPhoto", () => {
     expect(msg?.photo?.fileId).toBe("doc123");
   });
 });
+
+describe("TelegramChannel message edits", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("editMessageText sends text and optional keyboard", async () => {
+    const channel = new TelegramChannel(settings, "test-token");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await channel.editMessageText(99, 12, "logged <b>salad</b>", "HTML", [
+      [{ label: "Log", data: "meal:log" }],
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/editMessageText"),
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("logged"),
+      }),
+    );
+  });
+
+  it("clearMessageReplyMarkup clears inline keyboard", async () => {
+    const channel = new TelegramChannel(settings, "test-token");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await channel.clearMessageReplyMarkup(99, 12);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reply_markup).toEqual({ inline_keyboard: [] });
+  });
+
+  it("answerCallback can include toast text", async () => {
+    const channel = new TelegramChannel(settings, "test-token");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await channel.answerCallback("cb-1", { text: "skipped" });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.text).toBe("skipped");
+  });
+});

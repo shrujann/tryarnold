@@ -22,6 +22,10 @@ import {
 } from "../services/onboarding";
 import { parseHeight, parseWeight, type UnitPreference } from "../services/units";
 import { stripEmoji } from "../services/text-style";
+import {
+  clearInteractiveKeyboard,
+  sendInteractiveMessage,
+} from "../channels/interactive";
 import { sendOut } from "./commands";
 
 function isOnboarded(user: UserRow): boolean {
@@ -51,7 +55,7 @@ async function sendStep(
   const buttons = stepButtons(step);
 
   if (buttons.length) {
-    await channel.sendTextWithKeyboard(chatId, prompt, buttons, replyToken);
+    await sendInteractiveMessage(channel, chatId, prompt, buttons, replyToken);
     const { logMessage } = await import("../db/messages");
     await logMessage(db, user.id, "out", prompt, channel.name);
     return;
@@ -107,6 +111,7 @@ async function handleButtonStep(
   user: UserRow,
   action: ReturnType<typeof normalizeOnboardAction> & object,
   replyToken?: string | null,
+  callbackMessageId?: number | null,
 ): Promise<void> {
   const step = currentStep(user);
   if (action.step !== step) {
@@ -122,6 +127,8 @@ async function handleButtonStep(
     await presentOnboardingStep(channel, db, chatId, user, replyToken);
     return;
   }
+
+  await clearInteractiveKeyboard(channel, chatId, callbackMessageId);
 
   switch (step) {
     case "unit": {
@@ -291,7 +298,15 @@ export async function handleOnboarding(
   if (isCallback(msg)) {
     const action = normalizeOnboardAction(msg.callbackData ?? "");
     if (action) {
-      await handleButtonStep(channel, db, msg.chatId, user, action, msg.replyToken);
+      await handleButtonStep(
+        channel,
+        db,
+        msg.chatId,
+        user,
+        action,
+        msg.replyToken,
+        msg.callbackMessageId,
+      );
       return true;
     }
     return true;

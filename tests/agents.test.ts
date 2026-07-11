@@ -27,6 +27,7 @@ describe("coach tools", () => {
       "get_progress",
       "get_recent_meals",
       "log_meal_from_text",
+      "delete_last_meal",
     ]);
   });
 });

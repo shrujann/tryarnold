@@ -2,18 +2,10 @@ import type { Env } from "../env";
 import { getSettings } from "../config";
 import type { InboundMessage, MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
-import { getDailyProgress } from "../db/users";
-import { insertPendingMeal } from "../db/pending-meals";
-import { applyMultiplier, needsPortionConfirm } from "../schemas/nutrition";
 import { estimateFromImage } from "../agents/vision";
-import {
-  enrichEstimateWithFatSecret,
-  FATSECRET_ATTRIBUTION_LINE,
-  FATSECRET_ATTRIBUTION_TELEGRAM,
-} from "../services/fatsecret";
 import { createLogger } from "../services/logger";
-import { stripEmoji } from "../services/text-style";
 import { sendOut } from "./commands";
+import { startClarifyFlowFromVision } from "./clarification";
 
 export async function handlePhoto(
   env: Env,
@@ -51,32 +43,24 @@ export async function handlePhoto(
 
   try {
     const image = await channel.downloadPhoto(msg.photo.fileId);
-
-    let estimate = await estimateFromImage(
+    const { estimate: draft, clarification } = await estimateFromImage(
       env,
       image.bytes,
       image.mime,
       msg.caption,
     );
 
-    const { estimate: enriched, fatsecretUsed } = await enrichEstimateWithFatSecret(
-      estimate,
-      settings,
-    );
-    estimate = enriched;
-
     logger.info({
-      stage: "photo_enriched",
+      stage: "photo_vision",
       userId,
-      fatsecretUsed,
-      calories: estimate.calories,
-      items: (estimate.items ?? []).map((i) => i.name),
+      calories: draft.calories,
+      toggles: clarification.toggles.length,
+      exclusive: clarification.exclusive?.id ?? null,
+      items: (draft.items ?? []).map((i) => i.name),
     });
 
+    let estimate = draft;
     const multiplier = Number(user.portion_multiplier ?? 1);
-    if (multiplier !== 1) {
-      estimate = applyMultiplier(estimate, multiplier);
-    }
 
     if (estimate.calories > settings.mealConfirmMaxCalories) {
       estimate = {
@@ -85,80 +69,16 @@ export async function handlePhoto(
       };
     }
 
-    await insertPendingMeal(db, {
-      userId,
+    await startClarifyFlowFromVision(
+      env,
+      db,
+      channel,
+      msg,
+      user,
       estimate,
-      baseMultiplier: multiplier,
-      mediaRef: msg.photo.fileId,
-      mediaUniqueRef: msg.photo.fileUniqueId,
-      photoCaption: msg.caption,
-    });
-
-    const names = (estimate.items ?? []).slice(0, 3).map((i) => i.name);
-    const summary =
-      estimate.description?.trim() ||
-      (names.length ? names.join(" + ") : "meal");
-    const macros = `P${Math.round(estimate.protein_g)} C${Math.round(estimate.carbs_g)} F${Math.round(estimate.fat_g)}`;
-
-    let prompt: string;
-    let buttons: Array<Array<{ label: string; data: string }>>;
-
-    let remainingSuffix = "";
-    if (Number(user.onboarded) === 1) {
-      const progress = await getDailyProgress(db, user);
-      if (progress.remaining_calories != null) {
-        const left = Math.round(progress.remaining_calories - estimate.calories);
-        remainingSuffix = ` (${left} kcal left after this)`;
-      }
-    }
-
-    if (needsPortionConfirm(estimate, settings.portionConfidenceThreshold)) {
-      prompt = `${summary} - around ${Math.round(estimate.calories)} kcal (${macros}), but portion's unclear. how big was it?${remainingSuffix}`;
-      buttons = [
-        [
-          { label: "Small", data: "meal:size_s" },
-          { label: "Medium", data: "meal:size_m" },
-          { label: "Large", data: "meal:size_l" },
-        ],
-        [{ label: "Skip", data: "meal:skip" }],
-      ];
-    } else {
-      prompt = `${summary} - ~${Math.round(estimate.calories)} kcal (${macros}). tap to log or adjust.${remainingSuffix}`;
-      buttons = [
-        [
-          { label: "Log", data: "meal:log" },
-          { label: "Smaller", data: "meal:smaller" },
-          { label: "Bigger", data: "meal:bigger" },
-        ],
-        [{ label: "Skip", data: "meal:skip" }],
-      ];
-    }
-
-    const cleaned = stripEmoji(prompt);
-    const isTelegram = channel.name === "telegram";
-    const outgoing =
-      cleaned +
-      (fatsecretUsed
-        ? isTelegram
-          ? FATSECRET_ATTRIBUTION_TELEGRAM
-          : FATSECRET_ATTRIBUTION_LINE
-        : "");
-
-    await channel.sendTextWithKeyboard(
-      chatId,
-      outgoing,
-      buttons,
-      msg.replyToken,
-      fatsecretUsed && isTelegram ? "HTML" : undefined,
+      clarification,
+      multiplier,
     );
-
-    const { logMessage } = await import("../db/messages");
-    const logText =
-      cleaned +
-      (fatsecretUsed
-        ? "\n\nPowered by fatsecret Platform API — https://platform.fatsecret.com"
-        : "");
-    await logMessage(db, userId, "out", logText, channel.name);
   } catch (err) {
     console.error("Photo processing failed", err);
     await sendOut(

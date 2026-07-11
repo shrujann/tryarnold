@@ -1,7 +1,7 @@
 import type { MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
 import { getDailyProgress, updateOnboardingStep } from "../db/users";
-import { getLastMeal } from "../db/meals";
+import { deleteLastMeal, getLastMeal } from "../db/meals";
 import { hasStartedOnboarding } from "../services/onboarding";
 import { stripEmoji } from "../services/text-style";
 import { presentOnboardingStep, startOnboarding } from "./onboarding";
@@ -11,6 +11,7 @@ export const HELP =
   "- /start - set up or resume your calorie targets\n" +
   "- text me what you ate or send a food photo\n" +
   "- /progress - today's summary vs your targets\n" +
+  "- /undo - remove your last logged meal\n" +
   "- /setup - redo calorie and macro setup\n" +
   "- /last-analysis - last logged meal\n" +
   "- /help - this message\n\n" +
@@ -40,25 +41,18 @@ async function sendOut(
 }
 
 function formatProgress(user: UserRow, progress: Awaited<ReturnType<typeof getDailyProgress>>): string {
-  const base =
-    `today: ${Math.round(progress.calories)} kcal, ` +
-    `P${Math.round(progress.protein_g)}g ` +
-    `C${Math.round(progress.carbs_g)}g ` +
-    `F${Math.round(progress.fat_g)}g, ` +
-    `${progress.meals} meal(s)`;
+  const totals =
+    `today: ${Math.round(progress.calories)} kcal ` +
+    `(P${Math.round(progress.protein_g)} C${Math.round(progress.carbs_g)} F${Math.round(progress.fat_g)})` +
+    ` · ${progress.meals} meal${progress.meals === 1 ? "" : "s"}`;
 
-  if (progress.target_calories == null) return base;
+  if (progress.target_calories == null) return totals;
 
   const remaining = progress.remaining_calories ?? 0;
   const sign = remaining >= 0 ? "" : "+";
   const absRemaining = Math.abs(Math.round(remaining));
 
-  return (
-    `${base}\n` +
-    `targets: ${progress.target_calories} kcal, ` +
-    `P${progress.target_protein_g}g C${progress.target_carbs_g}g F${progress.target_fat_g}g\n` +
-    `${sign}${absRemaining} kcal ${remaining >= 0 ? "left" : "over"} today`
-  );
+  return `${totals}\n${sign}${absRemaining} kcal ${remaining >= 0 ? "left" : "over"} (target ${progress.target_calories})`;
 }
 
 export async function handleCommand(
@@ -105,6 +99,20 @@ export async function handleCommand(
       userId,
       channel.name,
       formatProgress(user, progress),
+      replyToken,
+    );
+    return true;
+  }
+
+  if (cmd === "undo") {
+    const removed = await deleteLastMeal(db, userId);
+    await sendOut(
+      channel,
+      db,
+      chatId,
+      userId,
+      channel.name,
+      removed ? `removed ${removed}` : "nothing to remove",
       replyToken,
     );
     return true;

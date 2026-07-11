@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LineChannel,
   buildFlexFooterContents,
+  buildQuickReplyItems,
   verifyLineSignature,
 } from "../src/channels/line";
+import { stepButtons } from "../src/services/onboarding";
 import { getSettings } from "../src/config";
 import type { Env } from "../src/env";
 
@@ -40,6 +42,84 @@ describe("verifyLineSignature", () => {
   it("rejects invalid signature", async () => {
     const valid = await verifyLineSignature('{"events":[]}', "bad-sig", "secret");
     expect(valid).toBe(false);
+  });
+});
+
+describe("buildQuickReplyItems", () => {
+  it("flattens button rows left-to-right", () => {
+    const buttons = [
+      [
+        { label: "Log", data: "meal:log" },
+        { label: "Edit", data: "meal:edit" },
+      ],
+      [{ label: "Skip", data: "meal:skip" }],
+    ];
+
+    const items = buildQuickReplyItems(buttons) as Array<{
+      action: { label: string; data: string; displayText: string; type: string };
+    }>;
+
+    expect(items).toHaveLength(3);
+    expect(items[0]!.action).toMatchObject({
+      type: "postback",
+      label: "Log",
+      data: "meal:log",
+      displayText: "Log",
+    });
+    expect(items[2]!.action.data).toBe("meal:skip");
+  });
+
+  it("caps at 13 items and truncates labels to 20 chars", () => {
+    const buttons = Array.from({ length: 15 }, (_, i) => [
+      { label: `Button number ${i + 1} extra long`, data: `onboard:item_${i}` },
+    ]);
+
+    const items = buildQuickReplyItems(buttons) as Array<{
+      action: { label: string; data: string };
+    }>;
+
+    expect(items).toHaveLength(13);
+    expect(items[0]!.action.label.length).toBeLessThanOrEqual(20);
+    expect(items[0]!.action.label).toBe("Button number 1 extr");
+    expect(items[12]!.action.data).toBe("onboard:item_12");
+  });
+
+  it("fits onboarding activity step (5 buttons)", () => {
+    const activityButtons = stepButtons("activity");
+    const items = buildQuickReplyItems(activityButtons);
+    expect(items).toHaveLength(5);
+  });
+});
+
+describe("LineChannel.sendTextWithKeyboard", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends plain text with quickReply, not flex", async () => {
+    const channel = new LineChannel(getSettings(testEnv()), "line-token");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+
+    await channel.sendTextWithKeyboard(
+      "U123",
+      "confirm meal",
+      [[{ label: "Log", data: "meal:log" }]],
+      "reply-token",
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.line.me/v2/bot/message/reply",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.messages[0].type).toBe("text");
+    expect(body.messages[0].text).toBe("confirm meal");
+    expect(body.messages[0].quickReply.items).toHaveLength(1);
+    expect(body.messages[0].quickReply.items[0].action.data).toBe("meal:log");
+    expect(body.replyToken).toBe("reply-token");
   });
 });
 

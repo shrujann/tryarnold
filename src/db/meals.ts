@@ -45,3 +45,24 @@ export async function getLastMeal(
     userId,
   );
 }
+
+/** Deletes the user's most recently logged meal. Returns its description, or null if none. */
+export async function deleteLastMeal(
+  db: D1Database,
+  userId: number,
+): Promise<string | null> {
+  const last = await getLastMeal(db, userId);
+  if (!last || last.id == null) return null;
+
+  await dbRun(
+    db,
+    "DELETE FROM meals WHERE id = ? AND user_id = ?",
+    last.id,
+    userId,
+  );
+
+  const description = last.description;
+  return typeof description === "string" && description.trim()
+    ? description.trim()
+    : "meal";
+}

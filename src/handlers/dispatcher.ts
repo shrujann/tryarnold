@@ -4,14 +4,17 @@ import type { InboundMessage, MessagingChannel } from "../channels/types";
 import { displayText, hasPhoto, isCallback } from "../channels/types";
 import { getOrCreateUser } from "../db/users";
 import { logMessage } from "../db/messages";
-import { getPendingMeal } from "../db/pending-meals";
+import { getPendingMeal, pendingPhase } from "../db/pending-meals";
 import { normalizeOnboardAction, hasStartedOnboarding, START_REQUIRED_PROMPT, LINE_FOLLOW_PROMPT } from "../services/onboarding";
 import { normalizeActionWithSettings } from "../services/pending-meal";
+import { parseClarifyCallback } from "../services/clarification";
 import { runCoachAgent } from "../agents/coach";
 import { handleCommand, sendOut } from "./commands";
 import { handleOnboarding } from "./onboarding";
 import { handlePhoto } from "./photo";
 import { handleConfirmation } from "./confirmation";
+import { handleClarification } from "./clarification";
+import { handleMealEdit } from "./meal-edit";
 
 function isOnboarded(user: { onboarded?: number | null }): boolean {
   return Number(user.onboarded) === 1;
@@ -130,6 +133,22 @@ export async function processMessage(
 
     await handleOnboarding(env, db, channel, msg, user);
     return;
+  }
+
+  if (isCallback(msg)) {
+    const clarifyAction = parseClarifyCallback(msg.callbackData ?? "");
+    if (clarifyAction) {
+      await handleClarification(env, db, channel, msg, user, clarifyAction);
+      return;
+    }
+  }
+
+  if (!isCallback(msg) && text && !text.startsWith("/")) {
+    const pending = await getPendingMeal(db, userId);
+    if (pending && pendingPhase(pending) === "editing") {
+      await handleMealEdit(env, db, channel, msg, user, pending);
+      return;
+    }
   }
 
   const action = normalizeActionWithSettings(msg.callbackData ?? text, settings);

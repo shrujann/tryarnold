@@ -39,6 +39,7 @@ const mockChannel: MessagingChannel = {
   downloadPhoto: vi.fn(),
   parseUpdate: () => null,
   answerCallback: vi.fn(),
+  clearMessageReplyMarkup: vi.fn(),
 };
 
 const env = {} as Env;
@@ -105,11 +106,13 @@ describe("handleOnboarding", () => {
       chatId: 1,
       callbackData: "onboard:unit_metric",
       callbackQueryId: "cb-1",
+      callbackMessageId: 99,
     };
 
     const handled = await handleOnboarding(env, db, mockChannel, msg, user);
     expect(handled).toBe(true);
     expect(mockChannel.answerCallback).toHaveBeenCalledWith("cb-1");
+    expect(mockChannel.clearMessageReplyMarkup).toHaveBeenCalledWith(1, 99);
     expect(dbRun).toHaveBeenCalledWith(
       db,
       expect.stringContaining("unit_preference"),
