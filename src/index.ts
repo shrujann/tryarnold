@@ -39,7 +39,7 @@ export default {
           status: "ok",
           app: settings.appName,
           ai_enabled: settings.aiEnabled,
-          fatsecret_enabled: false,
+          fatsecret_enabled: settings.fatsecretEnabled,
           memory_backend: "d1-context",
           telegram_enabled: Boolean(settings.telegramBotToken),
           line_enabled: Boolean(settings.lineChannelAccessToken),
@@ -62,6 +62,10 @@ export default {
         try {
           await processTelegramUpdate(env, env.DB, channel, update);
         } catch (err) {
+          console.error("Telegram webhook failed", {
+            errName: err instanceof Error ? err.name : "Error",
+            errDetail: err instanceof Error ? err.message : String(err),
+          });
           return jsonResponse(
             {
               ok: false,

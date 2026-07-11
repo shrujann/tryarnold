@@ -37,12 +37,14 @@ export interface MessagingChannel {
     chatId: string | number,
     text: string,
     replyToken?: string | null,
+    parseMode?: "HTML",
   ): Promise<void>;
   sendTextWithKeyboard(
     chatId: string | number,
     text: string,
     buttons: ButtonRow[],
     replyToken?: string | null,
+    parseMode?: "HTML",
   ): Promise<void>;
   answerCallback?(callbackQueryId: string): Promise<void>;
   downloadPhoto(fileId: string): Promise<DownloadedImage>;

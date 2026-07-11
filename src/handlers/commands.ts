@@ -14,7 +14,7 @@ export const HELP =
   "- /setup - redo calorie and macro setup\n" +
   "- /last-analysis - last logged meal\n" +
   "- /help - this message\n\n" +
-  "note: proactive check-ins, pdf reports, and fatsecret are not on this worker.";
+  "note: proactive check-ins and pdf reports are not on this worker.";
 
 export const WELCOME =
   "hey, i'm your fitness coach. text meals or send food pics and i'll track " +

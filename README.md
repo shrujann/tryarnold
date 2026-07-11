@@ -40,6 +40,8 @@ npx wrangler d1 migrations apply arnold --remote  # production
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put FATSECRET_CONSUMER_KEY
+npx wrangler secret put FATSECRET_CONSUMER_SECRET
 npx wrangler secret put LINE_CHANNEL_SECRET
 npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put ADMIN_SECRET
@@ -61,7 +63,11 @@ curl -X POST https://<your-worker-url>/admin/set-line-webhook \
   -H "X-Admin-Secret: <ADMIN_SECRET>"
 ```
 
-Health: `GET /healthz` — check `telegram_enabled` and `line_enabled`.
+Health: `GET /healthz` — check `telegram_enabled`, `line_enabled`, and `fatsecret_enabled`.
+
+Set `LOG_LEVEL=DEBUG` in `.dev.vars` (or production vars) to see structured pipeline logs
+(vision → FatSecret request/response) in the `wrangler dev` terminal or via `wrangler tail`.
+Switch back to `INFO` in production to reduce noise.
 
 ## LINE Developers Console
 
@@ -110,6 +116,9 @@ wrangler.toml          Worker + D1 binding
 | `LINE_CHANNEL_SECRET` | LINE webhook HMAC secret (secret) |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API token (secret) |
 | `OPENROUTER_API_KEY` | Chat + vision (secret) |
+| `FATSECRET_CONSUMER_KEY` | FatSecret OAuth 1.0 consumer key (secret) |
+| `FATSECRET_CONSUMER_SECRET` | FatSecret OAuth 1.0 consumer secret (secret) |
+| `LOG_LEVEL` | `DEBUG`, `INFO` (default), `WARN`, or `ERROR` |
 | `PUBLIC_BASE_URL` | HTTPS base for webhook URLs |
 | `ADMIN_SECRET` | Protects `/admin/*` routes (secret) |
 | `OPENROUTER_MODEL` / `OPENROUTER_VISION_MODEL` | Defaults `openai/gpt-4o` |

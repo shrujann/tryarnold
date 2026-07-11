@@ -77,10 +77,15 @@ export class TelegramChannel implements MessagingChannel {
     chatId: string | number,
     text: string,
     _replyToken?: string | null,
+    parseMode?: "HTML",
   ): Promise<void> {
     const cleaned = stripEmoji(text);
     for (const chunk of chunkText(cleaned, 4096)) {
-      await this.call("sendMessage", { chat_id: chatId, text: chunk });
+      const payload: Record<string, unknown> = { chat_id: chatId, text: chunk };
+      if (parseMode) {
+        payload.parse_mode = parseMode;
+      }
+      await this.call("sendMessage", payload);
     }
   }
 
@@ -89,17 +94,22 @@ export class TelegramChannel implements MessagingChannel {
     text: string,
     buttons: ButtonRow[],
     _replyToken?: string | null,
+    parseMode?: "HTML",
   ): Promise<void> {
     const replyMarkup = {
       inline_keyboard: buttons.map((row) =>
         row.map((btn) => ({ text: btn.label, callback_data: btn.data })),
       ),
     };
-    await this.call("sendMessage", {
+    const payload: Record<string, unknown> = {
       chat_id: chatId,
       text: stripEmoji(text),
       reply_markup: replyMarkup,
-    });
+    };
+    if (parseMode) {
+      payload.parse_mode = parseMode;
+    }
+    await this.call("sendMessage", payload);
   }
 
   async answerCallback(callbackQueryId: string): Promise<void> {

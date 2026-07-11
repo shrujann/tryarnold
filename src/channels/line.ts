@@ -107,6 +107,7 @@ export class LineChannel implements MessagingChannel {
     chatId: string | number,
     text: string,
     replyToken?: string | null,
+    _parseMode?: "HTML",
   ): Promise<void> {
     await this.replyOrPush(
       chatId,
@@ -120,6 +121,7 @@ export class LineChannel implements MessagingChannel {
     text: string,
     buttons: ButtonRow[],
     replyToken?: string | null,
+    _parseMode?: "HTML",
   ): Promise<void> {
     const flexMessage = {
       type: "flex",

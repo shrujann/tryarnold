@@ -26,6 +26,9 @@ export interface Settings {
   aiEnabled: boolean;
   telegramBotUrl: string;
   lineAddUrl: string;
+  fatsecretConsumerKey: string | undefined;
+  fatsecretConsumerSecret: string | undefined;
+  fatsecretEnabled: boolean;
 }
 
 function envStr(env: Env, key: keyof Env, fallback?: string): string | undefined {
@@ -81,5 +84,10 @@ export function getSettings(env: Env): Settings {
     lineAddUrl:
       envStr(env, "LINE_ADD_URL", "https://line.me/R/ti/p/@386edctb") ??
       "https://line.me/R/ti/p/@386edctb",
+    fatsecretConsumerKey: envStr(env, "FATSECRET_CONSUMER_KEY"),
+    fatsecretConsumerSecret: envStr(env, "FATSECRET_CONSUMER_SECRET"),
+    fatsecretEnabled: Boolean(
+      envStr(env, "FATSECRET_CONSUMER_KEY") && envStr(env, "FATSECRET_CONSUMER_SECRET"),
+    ),
   };
 }

@@ -11,6 +11,11 @@ import { insertMeal } from "../db/meals";
 import { updatePortionMultiplier } from "../db/users";
 import { actionFactors } from "../services/pending-meal";
 import { applyMultiplier, macroEstimateFromDict } from "../schemas/nutrition";
+import {
+  FATSECRET_ATTRIBUTION_LINE,
+  FATSECRET_ATTRIBUTION_TELEGRAM,
+  hasFatSecretAssumption,
+} from "../services/fatsecret";
 import { sendOut } from "./commands";
 
 export async function handleConfirmation(
@@ -112,15 +117,32 @@ export async function handleConfirmation(
   }
 
   await deletePendingMeal(db, userId);
-  await sendOut(
-    channel,
-    db,
-    chatId,
-    userId,
-    channel.name,
+
+  const fatsecretUsed = hasFatSecretAssumption(estimate.assumptions);
+  const isTelegram = channel.name === "telegram";
+  let reply =
     `logged ${estimate.description || "meal"} - ${Math.round(estimate.calories)} kcal, ` +
+    `P${Math.round(estimate.protein_g)}g C${Math.round(estimate.carbs_g)}g ` +
+    `F${Math.round(estimate.fat_g)}g`;
+
+  if (fatsecretUsed) {
+    reply += isTelegram
+      ? FATSECRET_ATTRIBUTION_TELEGRAM
+      : FATSECRET_ATTRIBUTION_LINE;
+  }
+
+  if (fatsecretUsed && isTelegram) {
+    await channel.sendText(chatId, reply, msg.replyToken, "HTML");
+    const { logMessage } = await import("../db/messages");
+    const logText =
+      `logged ${estimate.description || "meal"} - ${Math.round(estimate.calories)} kcal, ` +
       `P${Math.round(estimate.protein_g)}g C${Math.round(estimate.carbs_g)}g ` +
-      `F${Math.round(estimate.fat_g)}g`,
-    msg.replyToken,
-  );
+      `F${Math.round(estimate.fat_g)}g` +
+      "\n\nPowered by fatsecret Platform API — https://platform.fatsecret.com";
+    const { stripEmoji } = await import("../services/text-style");
+    await logMessage(db, userId, "out", stripEmoji(logText), channel.name);
+    return;
+  }
+
+  await sendOut(channel, db, chatId, userId, channel.name, reply, msg.replyToken);
 }

@@ -6,6 +6,12 @@ import { getDailyProgress } from "../db/users";
 import { insertPendingMeal } from "../db/pending-meals";
 import { applyMultiplier, needsPortionConfirm } from "../schemas/nutrition";
 import { estimateFromImage } from "../agents/vision";
+import {
+  enrichEstimateWithFatSecret,
+  FATSECRET_ATTRIBUTION_LINE,
+  FATSECRET_ATTRIBUTION_TELEGRAM,
+} from "../services/fatsecret";
+import { createLogger } from "../services/logger";
 import { stripEmoji } from "../services/text-style";
 import { sendOut } from "./commands";
 
@@ -35,6 +41,14 @@ export async function handlePhoto(
 
   if (!msg.photo) return;
 
+  const logger = createLogger(settings.logLevel);
+  logger.info({
+    stage: "photo_received",
+    userId,
+    channel: channel.name,
+    hasCaption: Boolean(msg.caption),
+  });
+
   try {
     const image = await channel.downloadPhoto(msg.photo.fileId);
 
@@ -44,6 +58,20 @@ export async function handlePhoto(
       image.mime,
       msg.caption,
     );
+
+    const { estimate: enriched, fatsecretUsed } = await enrichEstimateWithFatSecret(
+      estimate,
+      settings,
+    );
+    estimate = enriched;
+
+    logger.info({
+      stage: "photo_enriched",
+      userId,
+      fatsecretUsed,
+      calories: estimate.calories,
+      items: (estimate.items ?? []).map((i) => i.name),
+    });
 
     const multiplier = Number(user.portion_multiplier ?? 1);
     if (multiplier !== 1) {
@@ -67,7 +95,9 @@ export async function handlePhoto(
     });
 
     const names = (estimate.items ?? []).slice(0, 3).map((i) => i.name);
-    const summary = names.length ? names.join(" + ") : estimate.description || "meal";
+    const summary =
+      estimate.description?.trim() ||
+      (names.length ? names.join(" + ") : "meal");
     const macros = `P${Math.round(estimate.protein_g)} C${Math.round(estimate.carbs_g)} F${Math.round(estimate.fat_g)}`;
 
     let prompt: string;
@@ -105,10 +135,30 @@ export async function handlePhoto(
     }
 
     const cleaned = stripEmoji(prompt);
-    await channel.sendTextWithKeyboard(chatId, cleaned, buttons, msg.replyToken);
+    const isTelegram = channel.name === "telegram";
+    const outgoing =
+      cleaned +
+      (fatsecretUsed
+        ? isTelegram
+          ? FATSECRET_ATTRIBUTION_TELEGRAM
+          : FATSECRET_ATTRIBUTION_LINE
+        : "");
+
+    await channel.sendTextWithKeyboard(
+      chatId,
+      outgoing,
+      buttons,
+      msg.replyToken,
+      fatsecretUsed && isTelegram ? "HTML" : undefined,
+    );
 
     const { logMessage } = await import("../db/messages");
-    await logMessage(db, userId, "out", cleaned, channel.name);
+    const logText =
+      cleaned +
+      (fatsecretUsed
+        ? "\n\nPowered by fatsecret Platform API — https://platform.fatsecret.com"
+        : "");
+    await logMessage(db, userId, "out", logText, channel.name);
   } catch (err) {
     console.error("Photo processing failed", err);
     await sendOut(

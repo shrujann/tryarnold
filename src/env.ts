@@ -20,4 +20,6 @@ export interface Env {
   PORTION_SIZE_LARGE?: string;
   TELEGRAM_BOT_URL?: string;
   LINE_ADD_URL?: string;
+  FATSECRET_CONSUMER_KEY?: string;
+  FATSECRET_CONSUMER_SECRET?: string;
 }

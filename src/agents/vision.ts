@@ -8,6 +8,7 @@ import {
   type MacroEstimate,
 } from "../schemas/nutrition";
 import { createVisionModel } from "./llm";
+import { createLogger } from "../services/logger";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -63,10 +64,12 @@ export async function estimateFromImage(
 
   let prompt =
     "Identify this meal and estimate nutrition for the full plate. Return compact JSON with " +
-    "description, calories, protein_g, carbs_g, fat_g, food_confidence, portion_confidence, " +
-    "assumptions (array), items (max 3 with name, quantity, plate_share, calories, protein_g, " +
-    "carbs_g, fat_g). quantity descriptive only. Use best-effort numeric estimates. Do not leave " +
-    "calories or macros at 0 unless the food is genuinely negligible-calorie.";
+    "description (short meal name a user would say, e.g. 'iced coffee' or 'breakfast wrap', not a " +
+    "list of ingredients), calories, protein_g, carbs_g, fat_g, food_confidence, portion_confidence, " +
+    "assumptions (array), items (max 3 main components with name, quantity, plate_share, calories, " +
+    "protein_g, carbs_g, fat_g — include the primary dish, e.g. coffee for iced coffee). quantity " +
+    "descriptive only. Use best-effort numeric estimates. Do not leave calories or macros at 0 unless " +
+    "the food is genuinely negligible-calorie.";
   if (caption) prompt += ` User note: ${caption}`;
 
   const b64 = bytesToBase64(imageBytes);
@@ -94,7 +97,24 @@ export async function estimateFromImage(
       result = await invokeEstimate(retryPrompt);
       strictMacroEstimateSchema.parse(result);
     }
-    return normalizeMacroEstimate(macroEstimateSchema.parse(result));
+    const normalized = normalizeMacroEstimate(macroEstimateSchema.parse(result));
+    const logger = createLogger(settings.logLevel);
+    logger.debug({
+      stage: "vision",
+      description: normalized.description,
+      calories: normalized.calories,
+      protein_g: normalized.protein_g,
+      carbs_g: normalized.carbs_g,
+      fat_g: normalized.fat_g,
+      items: (normalized.items ?? []).map((i) => ({
+        name: i.name,
+        quantity: i.quantity,
+        calories: i.calories,
+      })),
+      food_confidence: normalized.food_confidence,
+      portion_confidence: normalized.portion_confidence,
+    });
+    return normalized;
   } catch (err) {
     console.error("Vision estimate failed", err);
     return normalizeMacroEstimate({
