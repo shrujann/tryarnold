@@ -101,19 +101,20 @@ export async function insertPendingMeal(
   );
 }
 
-export async function updatePendingMeal(
-  db: D1Database,
-  userId: number,
-  patch: {
-    estimate?: MacroEstimate;
-    phase?: PendingMealPhase;
-    clarifyPlan?: ClarifyPlan | null;
-    selectedToggleIds?: string[];
-    exclusiveChoice?: string | null;
-    uiMessageId?: string | null;
-    fatsecretPrefetch?: import("../services/fatsecret").FatSecretPrefetchCache | null;
-  },
-): Promise<void> {
+type PendingMealPatch = {
+  estimate?: MacroEstimate;
+  phase?: PendingMealPhase;
+  clarifyPlan?: ClarifyPlan | null;
+  selectedToggleIds?: string[];
+  exclusiveChoice?: string | null;
+  uiMessageId?: string | null;
+  fatsecretPrefetch?: import("../services/fatsecret").FatSecretPrefetchCache | null;
+};
+
+function buildPendingMealPatchSets(patch: PendingMealPatch): {
+  sets: string[];
+  values: unknown[];
+} {
   const sets: string[] = [];
   const values: unknown[] = [];
 
@@ -148,6 +149,15 @@ export async function updatePendingMeal(
     );
   }
 
+  return { sets, values };
+}
+
+export async function updatePendingMeal(
+  db: D1Database,
+  userId: number,
+  patch: PendingMealPatch,
+): Promise<void> {
+  const { sets, values } = buildPendingMealPatchSets(patch);
   if (sets.length === 0) return;
 
   values.push(userId);
@@ -156,6 +166,25 @@ export async function updatePendingMeal(
     `UPDATE pending_meals SET ${sets.join(", ")} WHERE user_id = ?`,
     ...values,
   );
+}
+
+/** Conditionally update a specific pending row; returns false if it was replaced. */
+export async function updatePendingMealIf(
+  db: D1Database,
+  userId: number,
+  expectedId: number,
+  patch: PendingMealPatch,
+): Promise<boolean> {
+  const { sets, values } = buildPendingMealPatchSets(patch);
+  if (sets.length === 0) return true;
+
+  values.push(userId, expectedId);
+  const changes = await dbRun(
+    db,
+    `UPDATE pending_meals SET ${sets.join(", ")} WHERE user_id = ? AND id = ?`,
+    ...values,
+  );
+  return changes > 0;
 }
 
 export async function getPendingMeal(

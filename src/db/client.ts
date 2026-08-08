@@ -23,13 +23,12 @@ export async function dbRun(
   db: D1Database,
   sql: string,
   ...binds: unknown[]
-): Promise<void> {
+): Promise<number> {
   const stmt = db.prepare(sql);
-  if (binds.length) {
-    await stmt.bind(...binds).run();
-  } else {
-    await stmt.run();
-  }
+  const result = binds.length
+    ? await stmt.bind(...binds).run()
+    : await stmt.run();
+  return Number(result.meta?.changes ?? 0);
 }
 
 export function utcNow(): string {

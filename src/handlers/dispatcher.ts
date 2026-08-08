@@ -4,7 +4,11 @@ import type { InboundMessage, MessagingChannel } from "../channels/types";
 import { displayText, hasPhoto, isCallback } from "../channels/types";
 import { getOrCreateUser } from "../db/users";
 import { logMessage } from "../db/messages";
-import { getPendingMeal, pendingPhase } from "../db/pending-meals";
+import {
+  deletePendingMeal,
+  getPendingMeal,
+  isPendingMealExpired,
+} from "../db/pending-meals";
 import { normalizeOnboardAction, hasStartedOnboarding, START_REQUIRED_PROMPT, LINE_FOLLOW_PROMPT } from "../services/onboarding";
 import { normalizeActionWithSettings } from "../services/pending-meal";
 import { parseClarifyCallback } from "../services/clarification";
@@ -143,14 +147,7 @@ export async function processMessage(
     }
   }
 
-  if (!isCallback(msg) && text && !text.startsWith("/")) {
-    const pending = await getPendingMeal(db, userId);
-    if (pending && pendingPhase(pending) === "editing") {
-      await handleMealEdit(env, db, channel, msg, user, pending);
-      return;
-    }
-  }
-
+  // Confirm aliases (log/skip/edit/yes/…) before free-text meal editing.
   const action = normalizeActionWithSettings(msg.callbackData ?? text, settings);
   if (action !== null) {
     const pending = await getPendingMeal(db, userId);
@@ -165,6 +162,28 @@ export async function processMessage(
       await channel.answerCallback(msg.callbackQueryId);
     }
     return;
+  }
+
+  // Any free text while a pending meal exists is meal-changing chat, not coach.
+  if (text && !text.startsWith("/")) {
+    const pending = await getPendingMeal(db, userId);
+    if (pending) {
+      if (isPendingMealExpired(pending, settings.pendingMealTtlMinutes)) {
+        await deletePendingMeal(db, userId);
+        await sendOut(
+          channel,
+          db,
+          chatId,
+          userId,
+          channel.name,
+          "that meal estimate expired. send the photo again.",
+          msg.replyToken,
+        );
+        return;
+      }
+      await handleMealEdit(env, db, channel, msg, user, pending);
+      return;
+    }
   }
 
   if (hasPhoto(msg)) {
