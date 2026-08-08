@@ -9,10 +9,15 @@ import {
   getPendingMeal,
   isPendingMealExpired,
 } from "../db/pending-meals";
+import {
+  extractBarcodeFromText,
+  isBarcodeCommand,
+} from "../services/barcode";
 import { normalizeOnboardAction, hasStartedOnboarding, START_REQUIRED_PROMPT, LINE_FOLLOW_PROMPT } from "../services/onboarding";
 import { normalizeActionWithSettings } from "../services/pending-meal";
 import { parseClarifyCallback } from "../services/clarification";
 import { runCoachAgent } from "../agents/coach";
+import { handleBarcodeLookup } from "./barcode";
 import { handleCommand, sendOut } from "./commands";
 import { handleOnboarding } from "./onboarding";
 import { handlePhoto } from "./photo";
@@ -189,6 +194,27 @@ export async function processMessage(
   if (hasPhoto(msg)) {
     await handlePhoto(env, db, channel, msg, user);
     return;
+  }
+
+  // Typed barcode: /barcode <digits> or a message that is only barcode digits.
+  if (text) {
+    if (isBarcodeCommand(text) && !extractBarcodeFromText(text)) {
+      await sendOut(
+        channel,
+        db,
+        chatId,
+        userId,
+        channel.name,
+        "send /barcode followed by the digits, e.g. /barcode 8881234567890",
+        msg.replyToken,
+      );
+      return;
+    }
+    const barcode = extractBarcodeFromText(text);
+    if (barcode) {
+      await handleBarcodeLookup(env, db, channel, msg, user, barcode);
+      return;
+    }
   }
 
   let reply: string;

@@ -10,6 +10,7 @@ export const HELP =
   "how this works:\n" +
   "- /start - set up or resume your calorie targets\n" +
   "- text me what you ate or send a food photo\n" +
+  "- send a barcode photo, type the digits, or /barcode 8881234567890\n" +
   "- /progress - today's summary vs your targets\n" +
   "- /undo - remove your last logged meal\n" +
   "- /setup - redo calorie and macro setup\n" +

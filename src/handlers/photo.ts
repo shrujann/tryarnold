@@ -2,8 +2,10 @@ import type { Env } from "../env";
 import { getSettings } from "../config";
 import type { InboundMessage, MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
+import { extractBarcodeFromImage } from "../agents/barcode-vision";
 import { estimateFromImage } from "../agents/vision";
 import { createLogger } from "../services/logger";
+import { handleBarcodeLookup } from "./barcode";
 import { sendOut } from "./commands";
 import { startClarifyFlowFromVision } from "./clarification";
 
@@ -43,6 +45,21 @@ export async function handlePhoto(
 
   try {
     const image = await channel.downloadPhoto(msg.photo.fileId);
+
+    // Prefer barcode lookup when the photo is a product barcode.
+    if (settings.fatsecretEnabled) {
+      const barcode = await extractBarcodeFromImage(env, image.bytes, image.mime);
+      if (barcode) {
+        logger.info({
+          stage: "photo_barcode",
+          userId,
+          barcode,
+        });
+        await handleBarcodeLookup(env, db, channel, msg, user, barcode);
+        return;
+      }
+    }
+
     const { estimate: draft, clarification } = await estimateFromImage(
       env,
       image.bytes,

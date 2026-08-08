@@ -28,6 +28,7 @@ export interface FatSecretServing {
   carbohydrate: string;
   protein: string;
   fat: string;
+  is_default?: boolean;
 }
 
 export interface FatSecretFoodImage {
@@ -152,6 +153,10 @@ function parseServing(raw: Record<string, unknown>): FatSecretServing {
     carbohydrate: String(raw.carbohydrate ?? "0"),
     protein: String(raw.protein ?? "0"),
     fat: String(raw.fat ?? "0"),
+    is_default:
+      raw.is_default === 1 ||
+      raw.is_default === "1" ||
+      raw.is_default === true,
   };
 }
 
@@ -288,6 +293,14 @@ export function servingMetricAmount(
   return { amount, unit: "g" };
 }
 
+/** Prefer FatSecret's flagged default serving when present. */
+export function pickDefaultServing(
+  servings: FatSecretServing[],
+): FatSecretServing | null {
+  if (!servings.length) return null;
+  return servings.find((s) => s.is_default) ?? null;
+}
+
 export function pickServing(
   servings: FatSecretServing[],
   item?: FoodItem,
@@ -323,6 +336,9 @@ export function pickServing(
       return candidates[0]!.serving;
     }
   }
+
+  const flagged = pickDefaultServing(servings);
+  if (flagged) return flagged;
 
   const hundredG = servings.find((s) => {
     const amount = parseFloat(s.metric_serving_amount ?? "");
@@ -658,6 +674,140 @@ export async function getFoodById(
   });
 
   return food;
+}
+
+/**
+ * Premier barcode lookup. Returns full food + servings (food.get.v5 shape).
+ * Error 211 = no food for barcode.
+ */
+export async function findFoodByBarcode(
+  barcode: string,
+  settings: Settings,
+): Promise<FatSecretFood | null> {
+  const logger = createLogger(settings.logLevel);
+  const method = "food.find_id_for_barcode.v2";
+
+  logger.debug({
+    stage: "fatsecret_request",
+    method,
+    barcode,
+    include_food_images: true,
+    include_sub_categories: true,
+  });
+
+  const json = await callFatSecretApi(settings, {
+    method,
+    barcode,
+    format: "json",
+    include_sub_categories: "true",
+    include_food_images: "true",
+    flag_default_serving: "true",
+  });
+
+  const apiError = parseFatSecretError(json);
+  if (apiError) {
+    if (apiError.startsWith("211")) {
+      logger.info({
+        stage: "fatsecret_response",
+        method,
+        barcode,
+        message: "no food for barcode",
+      });
+      return null;
+    }
+    throw new Error(`FatSecret API error: ${apiError}`);
+  }
+
+  const food = parseFoodGetResponse(json);
+  const serving = food
+    ? pickDefaultServing(food.servings) ?? pickServing(food.servings)
+    : null;
+
+  logger.debug({
+    stage: "fatsecret_response",
+    method,
+    barcode,
+    food_id: food?.food_id ?? null,
+    food_name: food?.food_name ?? null,
+    brand_name: food?.brand_name ?? null,
+    serving_used: serving?.serving_description ?? null,
+    image_count: food?.images.length ?? 0,
+    sub_category_count: food?.subCategories.length ?? 0,
+  });
+
+  return food;
+}
+
+/** Build a confirm-ready estimate from a barcode FatSecret food record. */
+export function estimateFromBarcodeFood(
+  food: FatSecretFood,
+  barcode: string,
+): MacroEstimate {
+  const serving =
+    pickDefaultServing(food.servings) ?? pickServing(food.servings);
+  if (!serving) {
+    return normalizePortionEstimate({
+      description: food.brand_name
+        ? `${food.brand_name} ${food.food_name}`
+        : food.food_name,
+      calories: 0,
+      protein_g: 0,
+      carbs_g: 0,
+      fat_g: 0,
+      food_confidence: 0.2,
+      portion_confidence: 0.2,
+      confidence: 0.2,
+      assumptions: [`barcode: ${barcode} (no serving data)`],
+      portion: {
+        container_type: "packaged",
+        container_volume_ml: null,
+        fill_fraction: 1,
+        notes: "barcode lookup",
+      },
+      items: [],
+    });
+  }
+
+  const macros = servingToItemMacros(serving, 1);
+  const metric = servingMetricAmount(serving);
+  const displayName = food.brand_name
+    ? `${food.brand_name} ${food.food_name}`
+    : food.food_name;
+
+  const item: FoodItem = {
+    name: displayName,
+    quantity: serving.serving_description,
+    plate_share: 1,
+    weight_g: metric?.unit === "g" ? metric.amount : 0,
+    volume_ml: metric?.unit === "ml" ? metric.amount : null,
+    volume_fraction: null,
+    calories: macros.calories,
+    protein_g: macros.protein_g,
+    carbs_g: macros.carbs_g,
+    fat_g: macros.fat_g,
+  };
+
+  return normalizePortionEstimate({
+    description: displayName,
+    calories: macros.calories,
+    protein_g: macros.protein_g,
+    carbs_g: macros.carbs_g,
+    fat_g: macros.fat_g,
+    food_confidence: 0.95,
+    portion_confidence: 0.9,
+    confidence: 0.9,
+    assumptions: [
+      `fatsecret: ${displayName} (${serving.serving_description})`,
+      `barcode: ${barcode}`,
+    ],
+    portion: {
+      container_type: "packaged",
+      container_volume_ml: metric?.unit === "ml" ? metric.amount : null,
+      fill_fraction: 1,
+      notes: `barcode ${barcode}`,
+    },
+    items: [item],
+  });
 }
 
 export function hasFatSecretAssumption(assumptions: string[]): boolean {
