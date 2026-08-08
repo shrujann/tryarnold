@@ -78,6 +78,7 @@ export async function handlePhoto(
       estimate,
       clarification,
       multiplier,
+      { bytes: image.bytes, mime: image.mime },
     );
   } catch (err) {
     console.error("Photo processing failed", err);

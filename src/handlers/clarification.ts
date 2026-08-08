@@ -87,12 +87,23 @@ async function fetchAndStoreNutritionCache(
   draft: Parameters<typeof mergeClarifyIntoDraft>[0],
   plan: ClarifyPlan,
   baseMultiplier: number,
+  userPhoto?: { bytes: Uint8Array; mime: string } | null,
 ): Promise<void> {
   const settings = getSettings(env);
   if (!settings.fatsecretEnabled) return;
 
   const scaledDraft = scaledVisionDraft(draft, baseMultiplier);
-  const cache = await fetchClarifyNutritionCache(scaledDraft, plan, settings);
+  let matchContext: Parameters<typeof fetchClarifyNutritionCache>[3];
+  if (userPhoto && settings.aiEnabled) {
+    const { createFoodImageRanker } = await import("../services/food-image-rank");
+    matchContext = { rankFoodCandidates: createFoodImageRanker(env, userPhoto) };
+  }
+  const cache = await fetchClarifyNutritionCache(
+    scaledDraft,
+    plan,
+    settings,
+    matchContext,
+  );
   await updatePendingMeal(db, userId, { fatsecretPrefetch: cache });
 }
 
@@ -316,6 +327,7 @@ export async function startClarifyFlowFromVision(
   draft: Parameters<typeof buildClarifyPlan>[0],
   clarification: Parameters<typeof buildClarifyPlan>[1],
   baseMultiplier: number,
+  userPhoto?: { bytes: Uint8Array; mime: string } | null,
 ): Promise<void> {
   const plan = buildClarifyPlan(draft, clarification);
   const chatId = msg.chatId;
@@ -335,7 +347,15 @@ export async function startClarifyFlowFromVision(
     });
 
     const analyzing = await beginPhotoAnalysisStatus(channel, chatId, lineReplyToken);
-    await fetchAndStoreNutritionCache(env, db, user.id, draft, plan, baseMultiplier);
+    await fetchAndStoreNutritionCache(
+      env,
+      db,
+      user.id,
+      draft,
+      plan,
+      baseMultiplier,
+      userPhoto,
+    );
     await endPhotoAnalysisStatus(channel, chatId, analyzing.telegramMessageId);
 
     const messageId = await sendToggleUi(channel, chatId, plan, [], null);
@@ -358,7 +378,15 @@ export async function startClarifyFlowFromVision(
     });
 
     const analyzing = await beginPhotoAnalysisStatus(channel, chatId, lineReplyToken);
-    await fetchAndStoreNutritionCache(env, db, user.id, draft, plan, baseMultiplier);
+    await fetchAndStoreNutritionCache(
+      env,
+      db,
+      user.id,
+      draft,
+      plan,
+      baseMultiplier,
+      userPhoto,
+    );
     await endPhotoAnalysisStatus(channel, chatId, analyzing.telegramMessageId);
 
     await sendExclusiveUi(channel, chatId, plan, null);
@@ -376,7 +404,15 @@ export async function startClarifyFlowFromVision(
   });
 
   const analyzing = await beginPhotoAnalysisStatus(channel, chatId, lineReplyToken);
-  await fetchAndStoreNutritionCache(env, db, user.id, draft, plan, baseMultiplier);
+  await fetchAndStoreNutritionCache(
+    env,
+    db,
+    user.id,
+    draft,
+    plan,
+    baseMultiplier,
+    userPhoto,
+  );
   await endPhotoAnalysisStatus(channel, chatId, analyzing.telegramMessageId);
 
   const pending = await getPendingMeal(db, user.id);

@@ -30,6 +30,11 @@ export interface FatSecretServing {
   fat: string;
 }
 
+export interface FatSecretFoodImage {
+  image_url: string;
+  image_type?: string;
+}
+
 export interface FatSecretFood {
   food_id: string;
   food_name: string;
@@ -37,12 +42,24 @@ export interface FatSecretFood {
   brand_name?: string;
   food_description?: string;
   servings: FatSecretServing[];
+  images: FatSecretFoodImage[];
 }
 
 export interface FatSecretSearchResult {
   total_results: number;
   foods: FatSecretFood[];
 }
+
+/** Optional hooks for matching search hits (e.g. vision image ranking). */
+export type FatSecretMatchContext = {
+  /** When set, used to pick among search candidates for visible items. */
+  rankFoodCandidates?: (
+    itemName: string,
+    candidates: FatSecretFood[],
+  ) => Promise<FatSecretFood | null>;
+  /** Apply image ranking only when true (default true if rankFoodCandidates set). */
+  useImageRanking?: boolean;
+};
 
 /** RFC 3986 percent-encoding for OAuth 1.0 parameter values. */
 export function percentEncode(value: string): string {
@@ -134,6 +151,22 @@ function parseServing(raw: Record<string, unknown>): FatSecretServing {
   };
 }
 
+function parseFoodImages(raw: Record<string, unknown>): FatSecretFoodImage[] {
+  const imagesRoot = raw.food_images as Record<string, unknown> | undefined;
+  if (!imagesRoot) return [];
+  const images: FatSecretFoodImage[] = [];
+  for (const entry of asArray(imagesRoot.food_image)) {
+    const row = entry as Record<string, unknown>;
+    const imageUrl = row.image_url ? String(row.image_url) : "";
+    if (!imageUrl) continue;
+    images.push({
+      image_url: imageUrl,
+      ...(row.image_type != null ? { image_type: String(row.image_type) } : {}),
+    });
+  }
+  return images;
+}
+
 function parseFood(raw: Record<string, unknown>): FatSecretFood {
   const servingsRaw = (raw.servings as Record<string, unknown> | undefined)?.serving;
   return {
@@ -145,7 +178,44 @@ function parseFood(raw: Record<string, unknown>): FatSecretFood {
     servings: asArray(servingsRaw).map((raw) =>
       parseServing(raw as Record<string, unknown>),
     ),
+    images: parseFoodImages(raw),
   };
+}
+
+/** Prefer mid-size reference images for vision ranking (bandwidth vs detail). */
+export function preferredFoodImageUrl(food: FatSecretFood): string | null {
+  if (!food.images.length) return null;
+  const bySize = (size: string) =>
+    food.images.find((img) => img.image_url.includes(`_${size}.`))?.image_url ??
+    null;
+  return (
+    bySize("400x400") ??
+    bySize("1024x1024") ??
+    bySize("72x72") ??
+    food.images[0]?.image_url ??
+    null
+  );
+}
+
+/** Pick the best search hit, optionally using image ranking against the user photo. */
+export async function selectFoodMatch(
+  foods: FatSecretFood[],
+  itemName: string,
+  context?: FatSecretMatchContext,
+): Promise<FatSecretFood | null> {
+  if (!foods.length) return null;
+
+  const useRanking =
+    context?.useImageRanking !== false && Boolean(context?.rankFoodCandidates);
+  if (useRanking && context?.rankFoodCandidates) {
+    const withImages = foods.filter((food) => preferredFoodImageUrl(food));
+    if (withImages.length > 0) {
+      const ranked = await context.rankFoodCandidates(itemName, withImages);
+      if (ranked) return ranked;
+    }
+  }
+
+  return foods[0] ?? null;
 }
 
 function parseFatSecretError(body: unknown): string | null {
@@ -442,14 +512,13 @@ async function callFatSecretApi(
   return resp.json();
 }
 
-/** Basic tier: v1 search (v5 returns "Unknown method"). */
-export async function searchFoods(
+async function searchFoodsWithMethod(
   searchExpression: string,
   settings: Settings,
+  method: "foods.search.v5" | "foods.search",
+  includeFoodImages: boolean,
 ): Promise<FatSecretSearchResult> {
   const logger = createLogger(settings.logLevel);
-  const method = "foods.search";
-
   const apiParams: Record<string, string> = {
     method,
     search_expression: searchExpression,
@@ -457,12 +526,17 @@ export async function searchFoods(
     max_results: "5",
     page_number: "0",
   };
+  if (includeFoodImages) {
+    apiParams.include_food_images = "true";
+    apiParams.flag_default_serving = "true";
+  }
 
   logger.debug({
     stage: "fatsecret_request",
     search_expression: searchExpression,
     method,
     max_results: 5,
+    include_food_images: includeFoodImages,
   });
 
   const json = await callFatSecretApi(settings, apiParams);
@@ -477,13 +551,48 @@ export async function searchFoods(
   logger.debug({
     stage: "fatsecret_response",
     search_expression: searchExpression,
+    method,
     total_results: parsed.total_results,
     top_match: topMatch?.food_name ?? null,
     top_food_id: topMatch?.food_id ?? null,
     serving_count: topMatch?.servings.length ?? 0,
+    image_count: topMatch?.images.length ?? 0,
   });
 
   return parsed;
+}
+
+/**
+ * Premier: foods.search.v5 with include_food_images.
+ * Falls back to Basic-tier foods.search if v5 is unavailable on the account.
+ */
+export async function searchFoods(
+  searchExpression: string,
+  settings: Settings,
+): Promise<FatSecretSearchResult> {
+  const logger = createLogger(settings.logLevel);
+  try {
+    return await searchFoodsWithMethod(
+      searchExpression,
+      settings,
+      "foods.search.v5",
+      true,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/unknown method/i.test(message)) throw err;
+    logger.warn({
+      stage: "fatsecret_request",
+      search_expression: searchExpression,
+      message: "foods.search.v5 unavailable; falling back to foods.search",
+    });
+    return searchFoodsWithMethod(
+      searchExpression,
+      settings,
+      "foods.search",
+      false,
+    );
+  }
 }
 
 /** v1 search has no servings — fetch full food record by id. */
@@ -555,6 +664,7 @@ const FATSECRET_FETCH_TIMEOUT_MS = 12_000;
 async function enrichVisibleItemsForPrefetch(
   scaledDraft: MacroEstimate,
   settings: Settings,
+  matchContext?: FatSecretMatchContext,
 ): Promise<{ items: FoodItem[]; fatsecretUsed: boolean; assumptions: string[] }> {
   const logger = createLogger(settings.logLevel);
   if (!settings.fatsecretEnabled || !(scaledDraft.items ?? []).length) {
@@ -570,6 +680,7 @@ async function enrichVisibleItemsForPrefetch(
     settings,
     logger,
     scaledDraft.assumptions,
+    matchContext,
   );
 
   return { items, fatsecretUsed: anyMatched, assumptions };
@@ -579,12 +690,14 @@ async function runClarifyFatSecretPrefetch(
   scaledDraft: MacroEstimate,
   plan: ClarifyPlan,
   settings: Settings,
+  matchContext?: FatSecretMatchContext,
 ): Promise<FatSecretPrefetchCache> {
   const logger = createLogger(settings.logLevel);
   const { addOns: candidates } = buildClarifyPrefetchCandidates(scaledDraft, plan);
 
+  // Image-rank visible items only; hidden add-ons (sugar/cream/oil) are not in the photo.
   const [visible, ...addOnResults] = await Promise.all([
-    enrichVisibleItemsForPrefetch(scaledDraft, settings),
+    enrichVisibleItemsForPrefetch(scaledDraft, settings, matchContext),
     ...candidates.map(async ({ key, item }) => {
       const { items, anyMatched, assumptions } = await enrichItemListWithFatSecret(
         [item],
@@ -623,17 +736,24 @@ export async function fetchClarifyNutritionCache(
   scaledDraft: MacroEstimate,
   plan: ClarifyPlan,
   settings: Settings,
+  matchContext?: FatSecretMatchContext,
 ): Promise<FatSecretPrefetchCache> {
   const logger = createLogger(settings.logLevel);
   const started = Date.now();
 
-  const cache = await runClarifyFatSecretPrefetch(scaledDraft, plan, settings);
+  const cache = await runClarifyFatSecretPrefetch(
+    scaledDraft,
+    plan,
+    settings,
+    matchContext,
+  );
 
   logger.info({
     stage: "fatsecret_fetch",
     fatsecretUsed: cache.fatsecretUsed,
     visibleItems: cache.visibleItems.map((i) => i.name),
     addOnKeys: Object.keys(cache.addOns),
+    imageRanking: Boolean(matchContext?.rankFoodCandidates),
     durationMs: Date.now() - started,
   });
 
@@ -732,6 +852,7 @@ async function enrichItemListWithFatSecret(
   settings: Settings,
   logger: ReturnType<typeof createLogger>,
   initialAssumptions: string[] = [],
+  matchContext?: FatSecretMatchContext,
 ): Promise<{ items: FoodItem[]; anyMatched: boolean; assumptions: string[] }> {
   const { items: expandedItems, splitNotes } = expandCompoundItems(items);
   const assumptions = [...initialAssumptions, ...splitNotes];
@@ -750,8 +871,7 @@ async function enrichItemListWithFatSecret(
 
       try {
         const result = await searchFoods(searchExpression, settings);
-        const topHit = result.foods[0];
-        if (!topHit || result.total_results <= 0) {
+        if (!result.foods.length || result.total_results <= 0) {
           logger.warn({
             stage: "fatsecret_response",
             search_expression: searchExpression,
@@ -764,10 +884,23 @@ async function enrichItemListWithFatSecret(
           };
         }
 
+        const selectedHit = await selectFoodMatch(
+          result.foods,
+          item.name,
+          matchContext,
+        );
+        if (!selectedHit) {
+          return {
+            item,
+            matched: false,
+            notes: [`nutrition: vision estimate (no fatsecret match for ${item.name})`],
+          };
+        }
+
         const topFood =
-          topHit.servings.length > 0
-            ? topHit
-            : (await getFoodById(topHit.food_id, settings)) ?? topHit;
+          selectedHit.servings.length > 0
+            ? selectedHit
+            : (await getFoodById(selectedHit.food_id, settings)) ?? selectedHit;
 
         const serving = pickServing(topFood.servings, item);
         if (!serving) {
@@ -832,6 +965,7 @@ async function enrichItemListWithFatSecret(
 export async function enrichEstimateWithFatSecret(
   estimate: MacroEstimate,
   settings: Settings,
+  matchContext?: FatSecretMatchContext,
 ): Promise<{ estimate: MacroEstimate; fatsecretUsed: boolean }> {
   const logger = createLogger(settings.logLevel);
 
@@ -845,6 +979,7 @@ export async function enrichEstimateWithFatSecret(
       settings,
       logger,
       estimate.assumptions,
+      matchContext,
     );
 
   if (!anyMatched) {
