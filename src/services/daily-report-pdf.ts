@@ -1,11 +1,16 @@
 import {
   PDFDocument,
+  PDFString,
   StandardFonts,
   rgb,
   type PDFFont,
   type PDFImage,
   type PDFPage,
 } from "pdf-lib";
+import {
+  FATSECRET_PLATFORM_URL,
+  fatsecretPoweredByPngBytes,
+} from "../assets/fatsecret-attribution";
 import type { DailyProgress } from "../db/users";
 import type { MealRow } from "../db/meals";
 import type { MacroEstimate } from "../schemas/nutrition";
@@ -16,7 +21,7 @@ const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
 const MARGIN_X = 48;
 const MARGIN_TOP = 48;
-const MARGIN_BOTTOM = 56;
+const MARGIN_BOTTOM = 64;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
 
 const COLOR = {
@@ -29,7 +34,7 @@ const COLOR = {
 
 const IMAGE_SIZE = 132;
 const MEAL_GAP = 28;
-const FOOTER_TEXT = "Powered by fatsecret Platform API — platform.fatsecret.com";
+const FOOTER_LOGO_HEIGHT = 18;
 
 export type ReportMealImage = {
   bytes: Uint8Array;
@@ -107,20 +112,35 @@ export function formatMealTimeLabel(ts: string, timezone: string): string {
   }
 }
 
-function drawFooter(page: PDFPage, font: PDFFont): void {
+function drawFooter(page: PDFPage, pdf: PDFDocument, logo: PDFImage): void {
   page.drawLine({
     start: { x: MARGIN_X, y: MARGIN_BOTTOM - 8 },
     end: { x: PAGE_WIDTH - MARGIN_X, y: MARGIN_BOTTOM - 8 },
     thickness: 0.6,
     color: COLOR.line,
   });
-  page.drawText(FOOTER_TEXT, {
-    x: MARGIN_X,
-    y: 28,
-    size: 8,
-    font,
-    color: COLOR.muted,
-  });
+
+  const logoH = FOOTER_LOGO_HEIGHT;
+  const logoW = (logo.width / logo.height) * logoH;
+  const x = MARGIN_X;
+  const y = 22;
+  page.drawImage(logo, { x, y, width: logoW, height: logoH });
+
+  // Clickable attribution equivalent to the FatSecret HTML badge link.
+  const linkRef = pdf.context.register(
+    pdf.context.obj({
+      Type: "Annot",
+      Subtype: "Link",
+      Rect: [x, y, x + logoW, y + logoH],
+      Border: [0, 0, 0],
+      A: {
+        Type: "Action",
+        S: "URI",
+        URI: PDFString.of(FATSECRET_PLATFORM_URL),
+      },
+    }),
+  );
+  page.node.addAnnot(linkRef);
 }
 
 async function embedMealImage(
@@ -450,9 +470,10 @@ export async function buildDailyReportPdf(
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const fatsecretLogo = await pdf.embedPng(fatsecretPoweredByPngBytes());
 
   let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawFooter(page, font);
+  drawFooter(page, pdf, fatsecretLogo);
   let y = drawHeader(page, bold, font, input.dateLabel);
   y = drawSummary(page, font, bold, y, input.progress);
 
@@ -474,7 +495,7 @@ export async function buildDailyReportPdf(
     );
     if (y - need < MARGIN_BOTTOM + 12) {
       page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      drawFooter(page, font);
+      drawFooter(page, pdf, fatsecretLogo);
       y = drawHeader(page, bold, font, input.dateLabel);
       page.drawText("Full Breakdown (continued)", {
         x: MARGIN_X,
