@@ -43,7 +43,11 @@ export interface FatSecretFood {
   food_description?: string;
   servings: FatSecretServing[];
   images: FatSecretFoodImage[];
+  subCategories: string[];
 }
+
+/** Premier foods.search.v5 page size (API default). */
+export const FATSECRET_SEARCH_MAX_RESULTS = 20;
 
 export interface FatSecretSearchResult {
   total_results: number;
@@ -167,6 +171,14 @@ function parseFoodImages(raw: Record<string, unknown>): FatSecretFoodImage[] {
   return images;
 }
 
+function parseFoodSubCategories(raw: Record<string, unknown>): string[] {
+  const root = raw.food_sub_categories as Record<string, unknown> | undefined;
+  if (!root) return [];
+  return asArray(root.food_sub_category)
+    .map((entry) => String(entry ?? "").trim())
+    .filter(Boolean);
+}
+
 function parseFood(raw: Record<string, unknown>): FatSecretFood {
   const servingsRaw = (raw.servings as Record<string, unknown> | undefined)?.serving;
   return {
@@ -179,6 +191,7 @@ function parseFood(raw: Record<string, unknown>): FatSecretFood {
       parseServing(raw as Record<string, unknown>),
     ),
     images: parseFoodImages(raw),
+    subCategories: parseFoodSubCategories(raw),
   };
 }
 
@@ -516,18 +529,19 @@ async function searchFoodsWithMethod(
   searchExpression: string,
   settings: Settings,
   method: "foods.search.v5" | "foods.search",
-  includeFoodImages: boolean,
+  premierExtras: boolean,
 ): Promise<FatSecretSearchResult> {
   const logger = createLogger(settings.logLevel);
   const apiParams: Record<string, string> = {
     method,
     search_expression: searchExpression,
     format: "json",
-    max_results: "5",
+    max_results: String(FATSECRET_SEARCH_MAX_RESULTS),
     page_number: "0",
   };
-  if (includeFoodImages) {
+  if (premierExtras) {
     apiParams.include_food_images = "true";
+    apiParams.include_sub_categories = "true";
     apiParams.flag_default_serving = "true";
   }
 
@@ -535,8 +549,9 @@ async function searchFoodsWithMethod(
     stage: "fatsecret_request",
     search_expression: searchExpression,
     method,
-    max_results: 5,
-    include_food_images: includeFoodImages,
+    max_results: FATSECRET_SEARCH_MAX_RESULTS,
+    include_food_images: premierExtras,
+    include_sub_categories: premierExtras,
   });
 
   const json = await callFatSecretApi(settings, apiParams);
@@ -553,17 +568,20 @@ async function searchFoodsWithMethod(
     search_expression: searchExpression,
     method,
     total_results: parsed.total_results,
+    returned_results: parsed.foods.length,
     top_match: topMatch?.food_name ?? null,
     top_food_id: topMatch?.food_id ?? null,
     serving_count: topMatch?.servings.length ?? 0,
     image_count: topMatch?.images.length ?? 0,
+    sub_category_count: topMatch?.subCategories.length ?? 0,
+    top_sub_categories: topMatch?.subCategories.slice(0, 5) ?? [],
   });
 
   return parsed;
 }
 
 /**
- * Premier: foods.search.v5 with include_food_images.
+ * Premier: foods.search.v5 with images + subcategories.
  * Falls back to Basic-tier foods.search if v5 is unavailable on the account.
  */
 export async function searchFoods(

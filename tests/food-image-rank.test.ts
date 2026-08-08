@@ -28,6 +28,7 @@ const candidates: FatSecretFood[] = [
     images: [
       { image_url: "https://www.foodimagedb.com/food-images/a_400x400.png" },
     ],
+    subCategories: ["Juice"],
   },
   {
     food_id: "2",
@@ -36,6 +37,7 @@ const candidates: FatSecretFood[] = [
     images: [
       { image_url: "https://www.foodimagedb.com/food-images/b_400x400.png" },
     ],
+    subCategories: ["Apples", "Fruit"],
   },
 ];
 

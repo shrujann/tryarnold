@@ -176,7 +176,7 @@ describe("parseSearchResponse", () => {
     expect(parsed.foods[0]!.servings).toHaveLength(2);
   });
 
-  it("parses include_food_images payloads", () => {
+  it("parses include_food_images and include_sub_categories payloads", () => {
     const body = {
       foods_search: {
         total_results: "1",
@@ -184,6 +184,9 @@ describe("parseSearchResponse", () => {
           food: {
             food_id: "1641",
             food_name: "Chicken Breast",
+            food_sub_categories: {
+              food_sub_category: ["Chicken Breast", "Chicken"],
+            },
             food_images: {
               food_image: [
                 {
@@ -215,6 +218,7 @@ describe("parseSearchResponse", () => {
     const parsed = parseSearchResponse(body);
     expect(parsed.foods[0]!.images).toHaveLength(2);
     expect(preferredFoodImageUrl(parsed.foods[0]!)).toContain("400x400");
+    expect(parsed.foods[0]!.subCategories).toEqual(["Chicken Breast", "Chicken"]);
   });
 });
 
@@ -229,6 +233,7 @@ describe("selectFoodMatch", () => {
           image_url: "https://www.foodimagedb.com/food-images/a_400x400.png",
         },
       ],
+      subCategories: ["Juice"],
     },
     {
       food_id: "2",
@@ -239,6 +244,7 @@ describe("selectFoodMatch", () => {
           image_url: "https://www.foodimagedb.com/food-images/b_400x400.png",
         },
       ],
+      subCategories: ["Apples", "Fruit"],
     },
   ];
 
@@ -418,7 +424,7 @@ describe("searchFoods premier images", () => {
     vi.restoreAllMocks();
   });
 
-  it("calls foods.search.v5 with include_food_images", async () => {
+  it("calls foods.search.v5 with images, subcategories, and max_results 20", async () => {
     const settings = settingsWithFatSecret();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -429,6 +435,9 @@ describe("searchFoods premier images", () => {
               food: {
                 food_id: "1",
                 food_name: "Apple",
+                food_sub_categories: {
+                  food_sub_category: ["Apples", "Fruit"],
+                },
                 food_images: {
                   food_image: {
                     image_url: "https://www.foodimagedb.com/food-images/a_400x400.png",
@@ -454,13 +463,19 @@ describe("searchFoods premier images", () => {
       ),
     );
 
-    const { searchFoods } = await import("../src/services/fatsecret");
+    const { searchFoods, FATSECRET_SEARCH_MAX_RESULTS } = await import(
+      "../src/services/fatsecret"
+    );
     const result = await searchFoods("apple", settings);
     expect(result.foods[0]!.images[0]!.image_url).toContain("400x400");
+    expect(result.foods[0]!.subCategories).toEqual(["Apples", "Fruit"]);
 
     const body = new URLSearchParams(fetchMock.mock.calls[0]![1]?.body as string);
     expect(body.get("method")).toBe("foods.search.v5");
     expect(body.get("include_food_images")).toBe("true");
+    expect(body.get("include_sub_categories")).toBe("true");
+    expect(body.get("max_results")).toBe(String(FATSECRET_SEARCH_MAX_RESULTS));
+    expect(FATSECRET_SEARCH_MAX_RESULTS).toBe(20);
   });
 
   it("falls back to foods.search when v5 is unknown", async () => {
@@ -493,6 +508,8 @@ describe("searchFoods premier images", () => {
     expect(first.get("method")).toBe("foods.search.v5");
     expect(second.get("method")).toBe("foods.search");
     expect(second.get("include_food_images")).toBeNull();
+    expect(second.get("include_sub_categories")).toBeNull();
+    expect(second.get("max_results")).toBe("20");
   });
 });
 
