@@ -72,7 +72,7 @@ export async function processMessage(
   const text = (msg.text ?? "").trim();
 
   if (!isCallback(msg) && text.startsWith("/")) {
-    if (await handleCommand(channel, db, chatId, user, text, msg.replyToken)) {
+    if (await handleCommand(env, channel, db, chatId, user, text, msg.replyToken)) {
       return;
     }
   }

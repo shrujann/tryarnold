@@ -89,6 +89,7 @@ const mockChannel: MessagingChannel = {
   enabled: true,
   sendText: vi.fn(),
   sendTextWithKeyboard: vi.fn(async () => 42),
+  sendPhoto: vi.fn(),
   downloadPhoto: vi.fn(),
   parseUpdate: () => null,
   answerCallback: vi.fn(),
@@ -219,21 +220,26 @@ describe("handleConfirmation D1 flow", () => {
         userId: 1,
         source: "photo",
         estimate: expect.objectContaining({ description: "salad", calories: 400 }),
+        mediaRef: "f1",
       }),
     );
     expect(deletePendingMeal).toHaveBeenCalledWith(db, 1);
-    expect(mockChannel.editMessageText).toHaveBeenCalledWith(
+    expect(mockChannel.deleteMessage).toHaveBeenCalledWith(123, 100);
+    expect(mockChannel.sendPhoto).toHaveBeenCalledWith(
       123,
-      100,
-      expect.stringContaining("logged <b>salad</b> — 400 kcal"),
-      "HTML",
+      expect.objectContaining({
+        fileId: "f1",
+        caption: expect.stringContaining("logged <b>salad</b> — 400 kcal"),
+        parseMode: "HTML",
+      }),
     );
-    expect(mockChannel.editMessageText).toHaveBeenCalledWith(
+    expect(mockChannel.sendPhoto).toHaveBeenCalledWith(
       123,
-      100,
-      expect.stringContaining("Powered by fatsecret"),
-      "HTML",
+      expect.objectContaining({
+        caption: expect.stringContaining("Powered by fatsecret"),
+      }),
     );
+    expect(mockChannel.editMessageText).not.toHaveBeenCalled();
     expect(mockChannel.sendText).not.toHaveBeenCalled();
     expect(sendOut).not.toHaveBeenCalled();
   });
@@ -329,11 +335,12 @@ describe("handleConfirmation D1 flow", () => {
     );
   });
 
-  it("logs meal on LINE without skip acknowledgement message", async () => {
+  it("logs meal on LINE with photo and macro caption", async () => {
     const lineChannel: MessagingChannel = {
       ...mockChannel,
       name: "line",
       sendText: vi.fn(),
+      sendPhoto: vi.fn(),
     };
 
     const estimate = macroEstimateSchema.parse({
@@ -370,12 +377,16 @@ describe("handleConfirmation D1 flow", () => {
 
     await handleConfirmation(testEnv, db, lineChannel, msg, user, "log");
 
-    expect(lineChannel.sendText).toHaveBeenCalledTimes(1);
-    expect(lineChannel.sendText).toHaveBeenCalledWith(
+    expect(lineChannel.sendPhoto).toHaveBeenCalledTimes(1);
+    expect(lineChannel.sendPhoto).toHaveBeenCalledWith(
       "U123",
-      expect.stringMatching(/logged salad — 400 kcal.*Powered by fatsecret/s),
-      "reply-1",
+      expect.objectContaining({
+        imageUrl: expect.stringContaining("/media/"),
+        caption: expect.stringMatching(/logged salad — 400 kcal.*Powered by fatsecret/s),
+        replyToken: "reply-1",
+      }),
     );
+    expect(lineChannel.sendText).not.toHaveBeenCalled();
     expect(sendOut).not.toHaveBeenCalled();
   });
 
@@ -465,8 +476,60 @@ describe("handleConfirmation D1 flow", () => {
       }),
     );
     expect(deletePendingMeal).toHaveBeenCalledWith(db, 1);
-    expect(mockChannel.sendText).toHaveBeenCalled();
+    expect(mockChannel.sendPhoto).toHaveBeenCalledWith(
+      123,
+      expect.objectContaining({
+        fileId: "f1",
+        caption: expect.stringContaining("logged <b>salad</b> — 400 kcal"),
+      }),
+    );
+    expect(mockChannel.sendText).not.toHaveBeenCalled();
     expect(sendOut).not.toHaveBeenCalled();
+  });
+
+  it("falls back to text edit when meal has no photo", async () => {
+    const estimate = macroEstimateSchema.parse({
+      description: "salad",
+      calories: 400,
+      protein_g: 20,
+      carbs_g: 30,
+      fat_g: 15,
+      portion_confidence: 0.8,
+      food_confidence: 0.9,
+      items: [],
+    });
+
+    vi.mocked(getPendingMeal).mockResolvedValue({
+      id: 1,
+      user_id: 1,
+      estimate_json: JSON.stringify(estimate),
+      base_multiplier: 1,
+      media_ref: null,
+      media_unique_ref: null,
+      photo_caption: null,
+      created_at: new Date().toISOString(),
+      phase: "confirm",
+      ui_message_id: "100",
+    });
+
+    const msg: InboundMessage = {
+      channel: "telegram",
+      externalUserId: "123",
+      chatId: 123,
+      callbackData: "meal:log",
+      callbackQueryId: "cb-1",
+      callbackMessageId: 100,
+    };
+
+    await handleConfirmation(testEnv, db, mockChannel, msg, user, "log");
+
+    expect(mockChannel.sendPhoto).not.toHaveBeenCalled();
+    expect(mockChannel.editMessageText).toHaveBeenCalledWith(
+      123,
+      100,
+      expect.stringContaining("logged <b>salad</b> — 400 kcal"),
+      "HTML",
+    );
   });
 
   it("skips when no pending meal", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatMealConfirmMessage,
   formatMealLoggedMessage,
+  formatMealReportCard,
   getDisplayableItems,
 } from "../src/services/meal-format";
 import type { MacroEstimate } from "../src/schemas/nutrition";
@@ -172,14 +173,33 @@ describe("formatMealConfirmMessage", () => {
 });
 
 describe("formatMealLoggedMessage", () => {
-  it("includes meal name with total calories and macros", () => {
+  it("includes meal name, macros, and item breakdown", () => {
     const msg = formatMealLoggedMessage(icedCoffee, { channel: "line" });
-    expect(msg).toBe("logged iced coffee — 250 kcal (P7 C18 F12)");
-    expect(msg).not.toContain("•");
+    expect(msg).toContain("logged iced coffee — 250 kcal (P7 C18 F12)");
+    expect(msg).toContain("• coffee — 75 ml (~120 kcal)");
+    expect(msg).toContain("• whole milk — 260 ml (~100 kcal)");
   });
 
   it("uses HTML bold for telegram", () => {
     const msg = formatMealLoggedMessage(icedCoffee, { channel: "telegram" });
-    expect(msg).toBe("logged <b>iced coffee</b> — 250 kcal (P7 C18 F12)");
+    expect(msg).toContain("logged <b>iced coffee</b> — 250 kcal (P7 C18 F12)");
+    expect(msg).toContain("• coffee — 75 ml (~120 kcal)");
+  });
+
+  it("skips breakdown for a single-item meal", () => {
+    const msg = formatMealLoggedMessage(singleApple, { channel: "line" });
+    expect(msg).toBe("logged apple — 95 kcal (P1 C25 F0)");
+    expect(msg).not.toContain("•");
+  });
+});
+
+describe("formatMealReportCard", () => {
+  it("includes time prefix and macros", () => {
+    const msg = formatMealReportCard(icedCoffee, {
+      channel: "line",
+      timeLabel: "12:30",
+    });
+    expect(msg).toContain("12:30 · iced coffee — 250 kcal (P7 C18 F12)");
+    expect(msg).toContain("• coffee — 75 ml (~120 kcal)");
   });
 });

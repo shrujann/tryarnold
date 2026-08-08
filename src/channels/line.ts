@@ -6,6 +6,7 @@ import type {
   InboundMessage,
   InboundPhoto,
   MessagingChannel,
+  SendPhotoOptions,
 } from "./types";
 
 export async function verifyLineSignature(
@@ -163,6 +164,28 @@ export class LineChannel implements MessagingChannel {
     _parseMode?: "HTML",
   ): Promise<number | null> {
     return this.sendTextWithQuickReply(chatId, text, buttons, replyToken);
+  }
+
+  async sendPhoto(
+    chatId: string | number,
+    options: SendPhotoOptions,
+  ): Promise<void> {
+    const imageUrl = options.imageUrl;
+    if (!imageUrl) {
+      throw new Error("LINE sendPhoto requires a public imageUrl");
+    }
+
+    const messages: unknown[] = [
+      {
+        type: "image",
+        originalContentUrl: imageUrl,
+        previewImageUrl: imageUrl,
+      },
+    ];
+    if (options.caption) {
+      messages.push({ type: "text", text: stripEmoji(options.caption) });
+    }
+    await this.replyOrPush(chatId, messages, options.replyToken);
   }
 
   async downloadPhoto(messageId: string): Promise<DownloadedImage> {

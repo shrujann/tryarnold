@@ -125,13 +125,47 @@ export function formatMealLoggedMessage(
   const cal = Math.round(estimate.calories);
   const macros = macroSummary(estimate);
 
-  if (channel === "telegram") {
-    return `logged <b>${escapeHtml(title)}</b> — ${cal} kcal (${macros})`;
+  const headline =
+    channel === "telegram"
+      ? `logged <b>${escapeHtml(title)}</b> — ${cal} kcal (${macros})`
+      : `logged ${title} — ${cal} kcal (${macros})`;
+
+  const parts: string[] = [headline];
+  const breakdownItems = getDisplayableItems(estimate.items ?? []);
+  if (breakdownItems.length >= 2) {
+    parts.push("");
+    parts.push(formatBreakdownLines(breakdownItems, channel));
   }
-  return `logged ${title} — ${cal} kcal (${macros})`;
+  return parts.join("\n");
 }
 
 /** Plain-text version for message logs (no HTML). */
 export function formatMealLoggedPlain(estimate: MacroEstimate): string {
   return formatMealLoggedMessage(estimate, { channel: "line" });
+}
+
+/** Caption for a meal row in /report (optional time prefix). */
+export function formatMealReportCard(
+  estimate: MacroEstimate,
+  opts: { channel: MealFormatChannel; timeLabel?: string },
+): string {
+  const { channel, timeLabel } = opts;
+  const title = mealTitle(estimate);
+  const cal = Math.round(estimate.calories);
+  const macros = macroSummary(estimate);
+  const core =
+    channel === "telegram"
+      ? `<b>${escapeHtml(title)}</b> — ${cal} kcal (${macros})`
+      : `${title} — ${cal} kcal (${macros})`;
+  const headline = timeLabel
+    ? `${channel === "telegram" ? escapeHtml(timeLabel) : timeLabel} · ${core}`
+    : core;
+
+  const parts: string[] = [headline];
+  const breakdownItems = getDisplayableItems(estimate.items ?? []);
+  if (breakdownItems.length >= 2) {
+    parts.push("");
+    parts.push(formatBreakdownLines(breakdownItems, channel));
+  }
+  return parts.join("\n");
 }

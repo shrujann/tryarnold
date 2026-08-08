@@ -1,3 +1,4 @@
+import type { Env } from "../env";
 import type { MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
 import { getDailyProgress, updateOnboardingStep } from "../db/users";
@@ -5,6 +6,7 @@ import { deleteLastMeal, getLastMeal } from "../db/meals";
 import { hasStartedOnboarding } from "../services/onboarding";
 import { stripEmoji } from "../services/text-style";
 import { presentOnboardingStep, startOnboarding } from "./onboarding";
+import { handleDailyReport } from "./daily-report";
 
 export const HELP =
   "how this works:\n" +
@@ -12,11 +14,12 @@ export const HELP =
   "- text me what you ate or send a food photo\n" +
   "- send a barcode photo, type the digits, or /barcode 8881234567890\n" +
   "- /progress - today's summary vs your targets\n" +
+  "- /report - today's meals with photos and macros\n" +
   "- /undo - remove your last logged meal\n" +
   "- /setup - redo calorie and macro setup\n" +
   "- /last-analysis - last logged meal\n" +
   "- /help - this message\n\n" +
-  "note: proactive check-ins and pdf reports are not on this worker.";
+  "note: proactive check-ins and weekly pdf reports are not on this worker.";
 
 export const WELCOME =
   "hey, i'm your fitness coach. text meals or send food pics and i'll track " +
@@ -57,6 +60,7 @@ function formatProgress(user: UserRow, progress: Awaited<ReturnType<typeof getDa
 }
 
 export async function handleCommand(
+  env: Env,
   channel: MessagingChannel,
   db: D1Database,
   chatId: string | number,
@@ -105,6 +109,11 @@ export async function handleCommand(
     return true;
   }
 
+  if (cmd === "report") {
+    await handleDailyReport(env, db, channel, chatId, user, replyToken);
+    return true;
+  }
+
   if (cmd === "undo") {
     const removed = await deleteLastMeal(db, userId);
     await sendOut(
@@ -119,7 +128,7 @@ export async function handleCommand(
     return true;
   }
 
-  if (["report", "week", "pause", "resume", "nudge-test", "test-nudge"].includes(cmd)) {
+  if (["week", "pause", "resume", "nudge-test", "test-nudge"].includes(cmd)) {
     await sendOut(
       channel,
       db,

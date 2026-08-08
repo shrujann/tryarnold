@@ -7,6 +7,7 @@ import {
   processTelegramUpdate,
 } from "./handlers/dispatcher";
 import { renderLandingPage } from "./landing/page";
+import { verifyMediaToken } from "./services/media-token";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -181,6 +182,35 @@ export default {
             },
             502,
           );
+        }
+      }
+
+      if (method === "GET" && path.startsWith("/media/")) {
+        const token = decodeURIComponent(path.slice("/media/".length));
+        const payload = await verifyMediaToken(settings, token);
+        if (!payload) {
+          return new Response("not found", { status: 404 });
+        }
+
+        try {
+          const channel =
+            payload.channel === "line"
+              ? new LineChannel(settings)
+              : new TelegramChannel(settings);
+          if (!channel.enabled) {
+            return new Response("channel unavailable", { status: 503 });
+          }
+          const image = await channel.downloadPhoto(payload.mediaRef);
+          return new Response(image.bytes, {
+            status: 200,
+            headers: {
+              "content-type": image.mime || "image/jpeg",
+              "cache-control": "private, max-age=300",
+            },
+          });
+        } catch (err) {
+          console.error("Media proxy failed", err);
+          return new Response("media unavailable", { status: 502 });
         }
       }
 

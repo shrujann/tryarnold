@@ -1,5 +1,22 @@
-import { dbFirst, dbRun, utcNow } from "./client";
+import { dbAll, dbFirst, dbRun, startOfDayInTimezone, utcNow } from "./client";
 import type { MacroEstimate } from "../schemas/nutrition";
+
+export interface MealRow {
+  id: number;
+  user_id: number;
+  ts: string;
+  source: string;
+  description: string | null;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  confidence: number | null;
+  items_json: string | null;
+  media_ref: string | null;
+  media_unique_ref: string | null;
+  photo_caption: string | null;
+}
 
 export async function insertMeal(
   db: D1Database,
@@ -65,4 +82,24 @@ export async function deleteLastMeal(
   return typeof description === "string" && description.trim()
     ? description.trim()
     : "meal";
+}
+
+/** Today's meals for /report, oldest first, including photo refs. */
+export async function getMealsForDay(
+  db: D1Database,
+  userId: number,
+  timezone: string,
+): Promise<MealRow[]> {
+  const start = startOfDayInTimezone(timezone || "UTC");
+  const rows = await dbAll(
+    db,
+    `SELECT id, user_id, ts, source, description, calories, protein_g, carbs_g, fat_g,
+            confidence, items_json, media_ref, media_unique_ref, photo_caption
+     FROM meals
+     WHERE user_id = ? AND ts >= ?
+     ORDER BY ts ASC`,
+    userId,
+    start,
+  );
+  return rows as unknown as MealRow[];
 }

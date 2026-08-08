@@ -6,7 +6,10 @@ import type {
   InboundMessage,
   InboundPhoto,
   MessagingChannel,
+  SendPhotoOptions,
 } from "./types";
+
+const TELEGRAM_CAPTION_MAX = 1024;
 
 const MIME_BY_EXT: Record<string, string> = {
   jpg: "image/jpeg",
@@ -224,6 +227,29 @@ export class TelegramChannel implements MessagingChannel {
     } catch {
       // Non-fatal: spinner may already be cleared
     }
+  }
+
+  async sendPhoto(
+    chatId: string | number,
+    options: SendPhotoOptions,
+  ): Promise<void> {
+    const photo = options.fileId || options.imageUrl;
+    if (!photo) {
+      throw new Error("Telegram sendPhoto requires fileId or imageUrl");
+    }
+
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      photo,
+    };
+    if (options.caption) {
+      const caption = stripEmoji(options.caption).slice(0, TELEGRAM_CAPTION_MAX);
+      payload.caption = caption;
+      if (options.parseMode) {
+        payload.parse_mode = options.parseMode;
+      }
+    }
+    await this.call("sendPhoto", payload);
   }
 
   async downloadPhoto(fileId: string): Promise<DownloadedImage> {

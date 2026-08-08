@@ -14,6 +14,7 @@ import { updatePortionMultiplier } from "../db/users";
 import { actionFactors } from "../services/pending-meal";
 import { applyMultiplier, macroEstimateFromDict, type MacroEstimate } from "../schemas/nutrition";
 import { formatMealLoggedMessage, formatMealLoggedPlain } from "../services/meal-format";
+import { resolveOutboundPhoto } from "../services/outbound-photo";
 import {
   FATSECRET_ATTRIBUTION_LINE,
   FATSECRET_ATTRIBUTION_TELEGRAM,
@@ -64,6 +65,79 @@ async function logOutgoingMessage(
       ? "\n\nPowered by fatsecret Platform API — https://platform.fatsecret.com"
       : "");
   await logMessage(db, userId, "out", logText, channelName);
+}
+
+async function deliverLoggedMeal(
+  env: Env,
+  db: D1Database,
+  channel: MessagingChannel,
+  msg: InboundMessage,
+  userId: number,
+  estimate: MacroEstimate,
+  mediaRef: string | null | undefined,
+  messageId: number | null,
+  fatsecretUsed: boolean,
+): Promise<void> {
+  const settings = getSettings(env);
+  const isTelegram = channel.name === "telegram";
+  const loggedText = formatLoggedOutgoing(estimate, channel.name, fatsecretUsed);
+  const parseMode = isTelegram ? ("HTML" as const) : undefined;
+
+  if (msg.callbackQueryId && channel.answerCallback) {
+    await channel.answerCallback(msg.callbackQueryId);
+  }
+
+  const photo = await resolveOutboundPhoto(channel.name, mediaRef, settings);
+  if (photo && channel.sendPhoto) {
+    // Retire the confirm keyboard so Log/Edit/Skip don't linger.
+    if (isTelegram && messageId) {
+      if (channel.deleteMessage) {
+        try {
+          await channel.deleteMessage(msg.chatId, messageId);
+        } catch {
+          if (channel.clearMessageReplyMarkup) {
+            await channel.clearMessageReplyMarkup(msg.chatId, messageId);
+          }
+        }
+      } else if (channel.clearMessageReplyMarkup) {
+        await channel.clearMessageReplyMarkup(msg.chatId, messageId);
+      }
+    }
+
+    try {
+      await channel.sendPhoto(msg.chatId, {
+        fileId: photo.fileId,
+        imageUrl: photo.imageUrl,
+        caption: loggedText,
+        parseMode,
+        replyToken: msg.replyToken,
+      });
+      await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
+      return;
+    } catch (err) {
+      console.error("Logged meal photo send failed; falling back to text", err);
+      // Fall through to text delivery.
+    }
+  }
+
+  if (isTelegram && messageId && channel.editMessageText) {
+    try {
+      await channel.editMessageText(msg.chatId, messageId, loggedText, "HTML");
+      await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
+      return;
+    } catch {
+      // Fall through to send a new message if edit fails (e.g. message too old).
+    }
+  }
+
+  if (isTelegram) {
+    await channel.sendText(msg.chatId, loggedText, msg.replyToken, "HTML");
+    await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
+    return;
+  }
+
+  await channel.sendText(msg.chatId, loggedText, msg.replyToken);
+  await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
 }
 
 export async function handleConfirmation(
@@ -228,28 +302,15 @@ export async function handleConfirmation(
   await deletePendingMeal(db, userId);
 
   const fatsecretUsed = hasFatSecretAssumption(estimate.assumptions ?? []);
-  const loggedText = formatLoggedOutgoing(estimate, channel.name, fatsecretUsed);
-
-  if (msg.callbackQueryId && channel.answerCallback) {
-    await channel.answerCallback(msg.callbackQueryId);
-  }
-
-  if (isTelegram && messageId && channel.editMessageText) {
-    try {
-      await channel.editMessageText(chatId, messageId, loggedText, "HTML");
-      await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
-      return;
-    } catch {
-      // Fall through to send a new message if edit fails (e.g. message too old).
-    }
-  }
-
-  if (isTelegram) {
-    await channel.sendText(chatId, loggedText, msg.replyToken, "HTML");
-    await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
-    return;
-  }
-
-  await channel.sendText(chatId, loggedText, msg.replyToken);
-  await logOutgoingMessage(db, userId, channel.name, estimate, fatsecretUsed);
+  await deliverLoggedMeal(
+    env,
+    db,
+    channel,
+    msg,
+    userId,
+    estimate,
+    pending.media_ref,
+    messageId,
+    fatsecretUsed,
+  );
 }

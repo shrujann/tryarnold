@@ -31,6 +31,16 @@ export interface DownloadedImage {
   mime: string;
 }
 
+export interface SendPhotoOptions {
+  /** Telegram file_id of a photo this bot already received. */
+  fileId?: string | null;
+  /** Public HTTPS image URL (required for LINE). */
+  imageUrl?: string | null;
+  caption?: string | null;
+  parseMode?: "HTML";
+  replyToken?: string | null;
+}
+
 export interface MessagingChannel {
   readonly name: string;
   readonly enabled: boolean;
@@ -53,6 +63,11 @@ export interface MessagingChannel {
     buttons: ButtonRow[],
     replyToken?: string | null,
   ): Promise<number | string | null>;
+  /** Re-send a meal photo (Telegram file_id or public image URL). */
+  sendPhoto?(
+    chatId: string | number,
+    options: SendPhotoOptions,
+  ): Promise<void>;
   editMessageReplyMarkup?(
     chatId: string | number,
     messageId: string | number,
