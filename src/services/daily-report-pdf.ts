@@ -2,6 +2,11 @@ import {
   PDFDocument,
   PDFString,
   StandardFonts,
+  clip,
+  endPath,
+  popGraphicsState,
+  pushGraphicsState,
+  rectangle,
   rgb,
   type PDFFont,
   type PDFImage,
@@ -32,9 +37,11 @@ const COLOR = {
   white: rgb(1, 1, 1),
 };
 
-const IMAGE_SIZE = 132;
-const MEAL_GAP = 28;
+const IMAGE_SIZE = 120;
+const CARD_PAD = 14;
+const MEAL_GAP = 20;
 const FOOTER_LOGO_HEIGHT = 18;
+const TEXT_GAP = 16;
 
 export type ReportMealImage = {
   bytes: Uint8Array;
@@ -319,119 +326,35 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   return lines;
 }
 
-function mealBlockHeight(
+function mealTextLines(
   estimate: MacroEstimate,
-  font: PDFFont,
-  textWidth: number,
-): number {
-  const titleLines = wrapText(estimate.description || "meal", font, 12, textWidth);
-  const items = getDisplayableItems(estimate.items ?? []);
-  const itemLines = items.slice(0, 6).length;
-  const textH = 14 + titleLines.length * 14 + 16 + 14 + itemLines * 12 + 8;
-  return Math.max(IMAGE_SIZE, textH);
-}
-
-function drawMealBlock(
-  page: PDFPage,
   font: PDFFont,
   bold: PDFFont,
-  yTop: number,
+  textWidth: number,
   timeLabel: string,
-  estimate: MacroEstimate,
-  image: PDFImage | null,
-): number {
-  const blockH = mealBlockHeight(estimate, bold, CONTENT_WIDTH - IMAGE_SIZE - 20);
-  const yBottom = yTop - blockH;
-
-  page.drawRectangle({
-    x: MARGIN_X,
-    y: yBottom,
-    width: CONTENT_WIDTH,
-    height: blockH,
-    borderColor: COLOR.line,
-    borderWidth: 0.8,
-    color: COLOR.white,
-  });
-
-  const imgX = MARGIN_X + 10;
-  const imgY = yTop - 10 - IMAGE_SIZE;
-  if (image) {
-    const dims = image.scale(
-      Math.min(IMAGE_SIZE / image.width, IMAGE_SIZE / image.height),
-    );
-    const offsetX = (IMAGE_SIZE - dims.width) / 2;
-    const offsetY = (IMAGE_SIZE - dims.height) / 2;
-    page.drawRectangle({
-      x: imgX,
-      y: imgY,
-      width: IMAGE_SIZE,
-      height: IMAGE_SIZE,
-      color: COLOR.soft,
-    });
-    page.drawImage(image, {
-      x: imgX + offsetX,
-      y: imgY + offsetY,
-      width: dims.width,
-      height: dims.height,
-    });
-  } else {
-    page.drawRectangle({
-      x: imgX,
-      y: imgY,
-      width: IMAGE_SIZE,
-      height: IMAGE_SIZE,
-      color: COLOR.soft,
-      borderColor: COLOR.line,
-      borderWidth: 0.6,
-    });
-    const placeholder = "No photo";
-    const pw = font.widthOfTextAtSize(placeholder, 9);
-    page.drawText(placeholder, {
-      x: imgX + (IMAGE_SIZE - pw) / 2,
-      y: imgY + IMAGE_SIZE / 2 - 4,
-      size: 9,
-      font,
-      color: COLOR.muted,
-    });
-  }
-
-  const textX = MARGIN_X + 10 + IMAGE_SIZE + 16;
-  const textWidth = CONTENT_WIDTH - IMAGE_SIZE - 36;
-  let textY = yTop - 22;
+): Array<{ text: string; size: number; font: PDFFont; color: typeof COLOR.ink }> {
+  const lines: Array<{
+    text: string;
+    size: number;
+    font: PDFFont;
+    color: typeof COLOR.ink;
+  }> = [];
 
   if (timeLabel) {
-    page.drawText(timeLabel, {
-      x: textX,
-      y: textY,
-      size: 9,
-      font,
-      color: COLOR.muted,
-    });
-    textY -= 16;
+    lines.push({ text: timeLabel, size: 9, font, color: COLOR.muted });
   }
 
   const title = estimate.description?.trim() || "meal";
   for (const line of wrapText(title, bold, 12, textWidth)) {
-    page.drawText(line, {
-      x: textX,
-      y: textY,
-      size: 12,
-      font: bold,
-      color: COLOR.ink,
-    });
-    textY -= 14;
+    lines.push({ text: line, size: 12, font: bold, color: COLOR.ink });
   }
 
-  textY -= 4;
-  const macroLine = `${Math.round(estimate.calories)} kcal    P ${Math.round(estimate.protein_g)} g    C ${Math.round(estimate.carbs_g)} g    F ${Math.round(estimate.fat_g)} g`;
-  page.drawText(macroLine, {
-    x: textX,
-    y: textY,
+  lines.push({
+    text: `${Math.round(estimate.calories)} kcal    P ${Math.round(estimate.protein_g)} g    C ${Math.round(estimate.carbs_g)} g    F ${Math.round(estimate.fat_g)} g`,
     size: 10,
     font,
     color: COLOR.ink,
   });
-  textY -= 16;
 
   const items = getDisplayableItems(estimate.items ?? []).slice(0, 6);
   for (const item of items) {
@@ -444,16 +367,127 @@ function drawMealBlock(
     const label = amount
       ? `• ${item.name} — ${amount} (~${Math.round(item.calories)} kcal)`
       : `• ${item.name} — ${Math.round(item.calories)} kcal`;
-    const lines = wrapText(label, font, 9, textWidth);
-    for (const line of lines) {
-      page.drawText(line, {
+    for (const line of wrapText(label, font, 9, textWidth)) {
+      lines.push({ text: line, size: 9, font, color: COLOR.muted });
+    }
+  }
+
+  return lines;
+}
+
+function mealTextHeight(lines: Array<{ size: number }>): number {
+  if (!lines.length) return 0;
+  let h = lines[0]!.size;
+  for (let i = 1; i < lines.length; i++) {
+    h += 4 + lines[i]!.size;
+  }
+  return h;
+}
+
+function mealBlockHeight(
+  estimate: MacroEstimate,
+  font: PDFFont,
+  bold: PDFFont,
+  textWidth: number,
+  timeLabel: string,
+): number {
+  const lines = mealTextLines(estimate, font, bold, textWidth, timeLabel);
+  const textH = mealTextHeight(lines);
+  return CARD_PAD * 2 + Math.max(IMAGE_SIZE, textH);
+}
+
+function drawCoverImage(
+  page: PDFPage,
+  image: PDFImage,
+  imgX: number,
+  imgY: number,
+): void {
+  const scale = Math.max(IMAGE_SIZE / image.width, IMAGE_SIZE / image.height);
+  const drawW = image.width * scale;
+  const drawH = image.height * scale;
+  const drawX = imgX + (IMAGE_SIZE - drawW) / 2;
+  const drawY = imgY + (IMAGE_SIZE - drawH) / 2;
+
+  page.pushOperators(pushGraphicsState());
+  page.pushOperators(rectangle(imgX, imgY, IMAGE_SIZE, IMAGE_SIZE), clip(), endPath());
+  page.drawImage(image, {
+    x: drawX,
+    y: drawY,
+    width: drawW,
+    height: drawH,
+  });
+  page.pushOperators(popGraphicsState());
+}
+
+function drawMealBlock(
+  page: PDFPage,
+  font: PDFFont,
+  bold: PDFFont,
+  yTop: number,
+  timeLabel: string,
+  estimate: MacroEstimate,
+  image: PDFImage | null,
+): number {
+  const textWidth = CONTENT_WIDTH - IMAGE_SIZE - CARD_PAD * 2 - TEXT_GAP;
+  const blockH = mealBlockHeight(estimate, font, bold, textWidth, timeLabel);
+  const yBottom = yTop - blockH;
+
+  page.drawRectangle({
+    x: MARGIN_X,
+    y: yBottom,
+    width: CONTENT_WIDTH,
+    height: blockH,
+    borderColor: COLOR.line,
+    borderWidth: 0.7,
+    color: COLOR.white,
+  });
+
+  // Image sits in a fixed left slot, vertically centered in the card.
+  const imgX = MARGIN_X + CARD_PAD;
+  const imgY = yBottom + (blockH - IMAGE_SIZE) / 2;
+
+  page.drawRectangle({
+    x: imgX,
+    y: imgY,
+    width: IMAGE_SIZE,
+    height: IMAGE_SIZE,
+    color: COLOR.soft,
+  });
+
+  if (image) {
+    drawCoverImage(page, image, imgX, imgY);
+  } else {
+    const placeholder = "No photo";
+    const pw = font.widthOfTextAtSize(placeholder, 9);
+    page.drawText(placeholder, {
+      x: imgX + (IMAGE_SIZE - pw) / 2,
+      y: imgY + IMAGE_SIZE / 2 - 3,
+      size: 9,
+      font,
+      color: COLOR.muted,
+    });
+  }
+
+  const lines = mealTextLines(estimate, font, bold, textWidth, timeLabel);
+  const textH = mealTextHeight(lines);
+  const textX = imgX + IMAGE_SIZE + TEXT_GAP;
+  if (lines.length) {
+    // Vertically center text against the image when shorter; otherwise top-align to image.
+    let textY =
+      textH <= IMAGE_SIZE
+        ? imgY + (IMAGE_SIZE + textH) / 2 - lines[0]!.size
+        : imgY + IMAGE_SIZE - lines[0]!.size;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (i > 0) textY -= lines[i - 1]!.size + 4;
+      page.drawText(line.text, {
         x: textX,
         y: textY,
-        size: 9,
-        font,
-        color: COLOR.muted,
+        size: line.size,
+        font: line.font,
+        color: line.color,
       });
-      textY -= 12;
     }
   }
 
@@ -488,10 +522,13 @@ export async function buildDailyReportPdf(
 
   for (const entry of input.meals) {
     const embedded = await embedMealImage(pdf, entry.image);
+    const textWidth = CONTENT_WIDTH - IMAGE_SIZE - CARD_PAD * 2 - TEXT_GAP;
     const need = mealBlockHeight(
       entry.estimate,
+      font,
       bold,
-      CONTENT_WIDTH - IMAGE_SIZE - 20,
+      textWidth,
+      entry.timeLabel,
     );
     if (y - need < MARGIN_BOTTOM + 12) {
       page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);

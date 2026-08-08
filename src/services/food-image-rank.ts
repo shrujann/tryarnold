@@ -64,10 +64,12 @@ export function createFoodImageRanker(
 
       const userDataUrl = `data:${userPhoto.mime};base64,${bytesToBase64(userPhoto.bytes)}`;
       const candidateLines = ranked
-        .map(
-          (entry, idx) =>
-            `${idx + 1}. food_id=${entry.food.food_id} name="${entry.food.food_name}"`,
-        )
+        .map((entry, idx) => {
+          const subs = entry.food.subCategories.length
+            ? ` subcategories=[${entry.food.subCategories.slice(0, 4).join(", ")}]`
+            : "";
+          return `${idx + 1}. food_id=${entry.food.food_id} name="${entry.food.food_name}"${subs}`;
+        })
         .join("\n");
 
       const content: Array<
@@ -79,6 +81,7 @@ export function createFoodImageRanker(
           text:
             `The first image is the user's meal photo. Identify the component "${itemName}" in that photo. ` +
             `Then compare it to the FatSecret reference images that follow and pick the best match.\n` +
+            `Use food names AND subcategories as hints (e.g. prefer "Apples"/"Fruit" over "Juice" for an apple).\n` +
             `Candidates:\n${candidateLines}\n` +
             `Return best_food_id from the list, or null if none is a reasonable visual match. ` +
             `confidence is 0–1 for how sure you are the reference shows the same food as that component.`,
@@ -87,9 +90,12 @@ export function createFoodImageRanker(
       ];
 
       for (const entry of ranked) {
+        const subs = entry.food.subCategories.length
+          ? ` subcategories=[${entry.food.subCategories.slice(0, 4).join(", ")}]`
+          : "";
         content.push({
           type: "text",
-          text: `Reference for food_id=${entry.food.food_id} (${entry.food.food_name}):`,
+          text: `Reference for food_id=${entry.food.food_id} (${entry.food.food_name}${subs}):`,
         });
         content.push({
           type: "image_url",

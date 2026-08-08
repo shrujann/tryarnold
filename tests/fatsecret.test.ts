@@ -11,6 +11,7 @@ import {
   preferredFoodImageUrl,
   reconcileItemMacrosToMeal,
   selectFoodMatch,
+  scoreFoodRelevance,
   WEIGHT_UNCERTAIN_ASSUMPTION,
   FATSECRET_API_URL,
   parseSearchResponse,
@@ -222,6 +223,28 @@ describe("parseSearchResponse", () => {
   });
 });
 
+describe("scoreFoodRelevance", () => {
+  it("scores subcategory matches higher than unrelated drinks", () => {
+    const juice: FatSecretFood = {
+      food_id: "1",
+      food_name: "Apple Juice",
+      servings: [],
+      images: [],
+      subCategories: ["Juice"],
+    };
+    const apple: FatSecretFood = {
+      food_id: "2",
+      food_name: "Apple",
+      servings: [],
+      images: [],
+      subCategories: ["Apples", "Fruit"],
+    };
+    expect(scoreFoodRelevance("apple", apple)).toBeGreaterThan(
+      scoreFoodRelevance("apple", juice),
+    );
+  });
+});
+
 describe("selectFoodMatch", () => {
   const foods: FatSecretFood[] = [
     {
@@ -248,9 +271,9 @@ describe("selectFoodMatch", () => {
     },
   ];
 
-  it("returns the top hit when no ranker is provided", async () => {
+  it("prefers subcategory-relevant hits when no ranker is provided", async () => {
     const selected = await selectFoodMatch(foods, "apple");
-    expect(selected?.food_id).toBe("1");
+    expect(selected?.food_id).toBe("2");
   });
 
   it("uses image ranker when available", async () => {
@@ -260,11 +283,11 @@ describe("selectFoodMatch", () => {
     expect(selected?.food_id).toBe("2");
   });
 
-  it("falls back to top hit when ranker returns null", async () => {
+  it("falls back to subcategory-ranked hit when ranker returns null", async () => {
     const selected = await selectFoodMatch(foods, "apple", {
       rankFoodCandidates: async () => null,
     });
-    expect(selected?.food_id).toBe("1");
+    expect(selected?.food_id).toBe("2");
   });
 });
 

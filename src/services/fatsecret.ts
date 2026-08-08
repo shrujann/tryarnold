@@ -215,7 +215,43 @@ export function preferredFoodImageUrl(food: FatSecretFood): string | null {
   );
 }
 
-/** Pick the best search hit, optionally using image ranking against the user photo. */
+function normalizeMatchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Score how well a FatSecret hit matches a vision item name using food name + subcategories.
+ * Higher is better. Used to prioritize candidates before image ranking.
+ */
+export function scoreFoodRelevance(itemName: string, food: FatSecretFood): number {
+  const query = normalizeMatchText(itemName);
+  if (!query) return 0;
+
+  const queryTokens = query.split(" ").filter((t) => t.length > 2);
+  let score = 0;
+
+  const foodName = normalizeMatchText(food.food_name);
+  if (foodName === query) score += 8;
+  else if (foodName.includes(query) || query.includes(foodName)) score += 5;
+  else if (queryTokens.some((t) => foodName.includes(t))) score += 2;
+
+  for (const sub of food.subCategories) {
+    const subNorm = normalizeMatchText(sub);
+    if (!subNorm) continue;
+    if (subNorm === query) score += 10;
+    else if (subNorm.includes(query) || query.includes(subNorm)) score += 6;
+    else if (queryTokens.some((t) => subNorm.includes(t))) score += 3;
+  }
+
+  // Prefer generic whole foods over drinks/juices when the query is a plain food name.
+  if (/\bjuice\b|\bsyrup\b|\bsauce\b/i.test(food.food_name) && !/\bjuice\b|\bsyrup\b|\bsauce\b/i.test(itemName)) {
+    score -= 2;
+  }
+
+  return score;
+}
+
+/** Pick the best search hit using subcategory relevance, then optional image ranking. */
 export async function selectFoodMatch(
   foods: FatSecretFood[],
   itemName: string,
@@ -223,17 +259,24 @@ export async function selectFoodMatch(
 ): Promise<FatSecretFood | null> {
   if (!foods.length) return null;
 
+  const ordered = [...foods].sort(
+    (a, b) => scoreFoodRelevance(itemName, b) - scoreFoodRelevance(itemName, a),
+  );
+
   const useRanking =
     context?.useImageRanking !== false && Boolean(context?.rankFoodCandidates);
   if (useRanking && context?.rankFoodCandidates) {
-    const withImages = foods.filter((food) => preferredFoodImageUrl(food));
+    // Rank among the most subcategory/name-relevant candidates that have images.
+    const withImages = ordered
+      .filter((food) => preferredFoodImageUrl(food))
+      .slice(0, 6);
     if (withImages.length > 0) {
       const ranked = await context.rankFoodCandidates(itemName, withImages);
       if (ranked) return ranked;
     }
   }
 
-  return foods[0] ?? null;
+  return ordered[0] ?? null;
 }
 
 function parseFatSecretError(body: unknown): string | null {
@@ -833,7 +876,10 @@ export function estimateFromBarcodeFood(
     portion_confidence: 0.9,
     confidence: 0.9,
     assumptions: [
-      `fatsecret: ${displayName} (${serving.serving_description})`,
+      `fatsecret: ${displayName} (${serving.serving_description})` +
+        (food.subCategories.length
+          ? ` · ${food.subCategories.slice(0, 3).join(", ")}`
+          : ""),
       `barcode: ${barcode}`,
     ],
     portion: {
@@ -1122,7 +1168,12 @@ async function enrichItemListWithFatSecret(
 
         const fsMacros = servingToItemMacros(serving, item.plate_share);
         const macros = blendItemMacrosWithVision(item, fsMacros, serving);
-        const notes = [`fatsecret: ${topFood.food_name} (${serving.serving_description})`];
+        const subNote = topFood.subCategories.length
+          ? ` · ${topFood.subCategories.slice(0, 3).join(", ")}`
+          : "";
+        const notes = [
+          `fatsecret: ${topFood.food_name} (${serving.serving_description})${subNote}`,
+        ];
         if (visionPortionAmount(item) == null) {
           weightUncertain = true;
         }
