@@ -6,6 +6,7 @@ import type {
   InboundMessage,
   InboundPhoto,
   MessagingChannel,
+  SendDocumentOptions,
   SendPhotoOptions,
 } from "./types";
 
@@ -180,6 +181,27 @@ export class LineChannel implements MessagingChannel {
         type: "image",
         originalContentUrl: imageUrl,
         previewImageUrl: imageUrl,
+      },
+    ];
+    if (options.caption) {
+      messages.push({ type: "text", text: stripEmoji(options.caption) });
+    }
+    await this.replyOrPush(chatId, messages, options.replyToken);
+  }
+
+  async sendDocument(
+    chatId: string | number,
+    options: SendDocumentOptions,
+  ): Promise<void> {
+    if (!options.fileUrl) {
+      throw new Error("LINE sendDocument requires a public fileUrl");
+    }
+    const messages: unknown[] = [
+      {
+        type: "file",
+        fileName: options.filename,
+        fileSize: options.bytes?.byteLength ?? 1,
+        originalContentUrl: options.fileUrl,
       },
     ];
     if (options.caption) {

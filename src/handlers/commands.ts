@@ -14,7 +14,7 @@ export const HELP =
   "- text me what you ate or send a food photo\n" +
   "- send a barcode photo, type the digits, or /barcode 8881234567890\n" +
   "- /progress - today's summary vs your targets\n" +
-  "- /report - today's meals with photos and macros\n" +
+  "- /report - today's nutrition PDF (meals, photos, macros)\n" +
   "- /undo - remove your last logged meal\n" +
   "- /setup - redo calorie and macro setup\n" +
   "- /last-analysis - last logged meal\n" +

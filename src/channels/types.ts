@@ -41,6 +41,17 @@ export interface SendPhotoOptions {
   replyToken?: string | null;
 }
 
+export interface SendDocumentOptions {
+  /** Raw file bytes (Telegram multipart upload). */
+  bytes?: Uint8Array | null;
+  /** Public HTTPS file URL (LINE file messages). */
+  fileUrl?: string | null;
+  filename: string;
+  mimeType?: string;
+  caption?: string | null;
+  replyToken?: string | null;
+}
+
 export interface MessagingChannel {
   readonly name: string;
   readonly enabled: boolean;
@@ -67,6 +78,11 @@ export interface MessagingChannel {
   sendPhoto?(
     chatId: string | number,
     options: SendPhotoOptions,
+  ): Promise<void>;
+  /** Send a document/file (e.g. daily PDF report). */
+  sendDocument?(
+    chatId: string | number,
+    options: SendDocumentOptions,
   ): Promise<void>;
   editMessageReplyMarkup?(
     chatId: string | number,

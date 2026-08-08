@@ -8,6 +8,8 @@ import {
 } from "./handlers/dispatcher";
 import { renderLandingPage } from "./landing/page";
 import { verifyMediaToken } from "./services/media-token";
+import { verifyReportToken } from "./services/report-token";
+import { serveDailyReportPdf } from "./handlers/daily-report";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -211,6 +213,21 @@ export default {
         } catch (err) {
           console.error("Media proxy failed", err);
           return new Response("media unavailable", { status: 502 });
+        }
+      }
+
+      if (method === "GET" && path.startsWith("/reports/") && path.endsWith(".pdf")) {
+        const raw = path.slice("/reports/".length, -".pdf".length);
+        const token = decodeURIComponent(raw);
+        const payload = await verifyReportToken(settings, token);
+        if (!payload) {
+          return new Response("not found", { status: 404 });
+        }
+        try {
+          return await serveDailyReportPdf(env, payload);
+        } catch (err) {
+          console.error("Report PDF serve failed", err);
+          return new Response("report unavailable", { status: 502 });
         }
       }
 

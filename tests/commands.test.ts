@@ -18,9 +18,20 @@ vi.mock("../src/db/messages", () => ({
   logMessage: vi.fn(),
 }));
 
+vi.mock("../src/services/daily-report-pdf", async () => {
+  const actual = await vi.importActual<
+    typeof import("../src/services/daily-report-pdf")
+  >("../src/services/daily-report-pdf");
+  return {
+    ...actual,
+    buildDailyReportPdf: vi.fn(async () => new TextEncoder().encode("%PDF-1.4 mock")),
+  };
+});
+
 import { deleteLastMeal, getMealsForDay } from "../src/db/meals";
 import { getDailyProgress } from "../src/db/users";
 import { handleCommand } from "../src/handlers/commands";
+import { buildDailyReportPdf } from "../src/services/daily-report-pdf";
 
 const mockChannel: MessagingChannel = {
   name: "telegram",
@@ -28,6 +39,7 @@ const mockChannel: MessagingChannel = {
   sendText: vi.fn(),
   sendTextWithKeyboard: vi.fn(),
   sendPhoto: vi.fn(),
+  sendDocument: vi.fn(),
   downloadPhoto: vi.fn(),
   parseUpdate: () => null,
 };
@@ -65,7 +77,7 @@ describe("/report command", () => {
     vi.clearAllMocks();
   });
 
-  it("sends a header plus photo cards for today's meals", async () => {
+  it("builds and sends a daily PDF report", async () => {
     vi.mocked(getDailyProgress).mockResolvedValue({
       calories: 500,
       protein_g: 20,
@@ -94,8 +106,8 @@ describe("/report command", () => {
         fat_g: 15,
         confidence: 0.8,
         items_json: JSON.stringify([]),
-        media_ref: "file-1",
-        media_unique_ref: "uniq-1",
+        media_ref: null,
+        media_unique_ref: null,
         photo_caption: null,
       },
     ]);
@@ -105,35 +117,21 @@ describe("/report command", () => {
     expect(handled).toBe(true);
     expect(mockChannel.sendText).toHaveBeenCalledWith(
       99,
-      expect.stringContaining("today's report: 500 kcal"),
+      "building your daily report…",
       undefined,
     );
-    expect(mockChannel.sendPhoto).toHaveBeenCalledWith(
+    expect(buildDailyReportPdf).toHaveBeenCalled();
+    expect(mockChannel.sendDocument).toHaveBeenCalledWith(
       99,
       expect.objectContaining({
-        fileId: "file-1",
-        caption: expect.stringContaining("<b>salad</b> — 500 kcal"),
-        parseMode: "HTML",
+        filename: expect.stringContaining("arnold-daily-report"),
+        mimeType: "application/pdf",
+        caption: expect.stringContaining("daily report"),
       }),
     );
   });
 
   it("tells the user when no meals are logged", async () => {
-    vi.mocked(getDailyProgress).mockResolvedValue({
-      calories: 0,
-      protein_g: 0,
-      carbs_g: 0,
-      fat_g: 0,
-      meals: 0,
-      target_calories: 2000,
-      target_protein_g: null,
-      target_carbs_g: null,
-      target_fat_g: null,
-      remaining_calories: 2000,
-      remaining_protein_g: null,
-      remaining_carbs_g: null,
-      remaining_fat_g: null,
-    });
     vi.mocked(getMealsForDay).mockResolvedValue([]);
 
     await handleCommand(testEnv, mockChannel, db, 99, user, "/report");
@@ -143,6 +141,6 @@ describe("/report command", () => {
       "no meals logged today yet. send a food photo to start.",
       undefined,
     );
-    expect(mockChannel.sendPhoto).not.toHaveBeenCalled();
+    expect(mockChannel.sendDocument).not.toHaveBeenCalled();
   });
 });

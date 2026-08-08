@@ -6,6 +6,7 @@ import type {
   InboundMessage,
   InboundPhoto,
   MessagingChannel,
+  SendDocumentOptions,
   SendPhotoOptions,
 } from "./types";
 
@@ -250,6 +251,50 @@ export class TelegramChannel implements MessagingChannel {
       }
     }
     await this.call("sendPhoto", payload);
+  }
+
+  async sendDocument(
+    chatId: string | number,
+    options: SendDocumentOptions,
+  ): Promise<void> {
+    if (options.bytes && options.bytes.byteLength > 0) {
+      const form = new FormData();
+      form.append("chat_id", String(chatId));
+      form.append(
+        "document",
+        new Blob([options.bytes], {
+          type: options.mimeType || "application/pdf",
+        }),
+        options.filename,
+      );
+      if (options.caption) {
+        form.append("caption", stripEmoji(options.caption));
+      }
+      const resp = await fetch(`${this.baseUrl}/sendDocument`, {
+        method: "POST",
+        body: form,
+      });
+      const data = (await resp.json()) as {
+        ok?: boolean;
+        description?: string;
+      };
+      if (!data.ok) {
+        throw new Error(data.description ?? "Telegram sendDocument failed");
+      }
+      return;
+    }
+
+    if (!options.fileUrl) {
+      throw new Error("Telegram sendDocument requires bytes or fileUrl");
+    }
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      document: options.fileUrl,
+    };
+    if (options.caption) {
+      payload.caption = stripEmoji(options.caption);
+    }
+    await this.call("sendDocument", payload);
   }
 
   async downloadPhoto(fileId: string): Promise<DownloadedImage> {
