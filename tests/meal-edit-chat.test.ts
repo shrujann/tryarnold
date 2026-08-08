@@ -67,12 +67,16 @@ vi.mock("../src/services/fatsecret", () => ({
     estimate,
     fatsecretUsed: false,
   })),
+  hasFatSecretAssumption: vi.fn((assumptions: string[] = []) =>
+    assumptions.some((a) => a.startsWith("fatsecret:")),
+  ),
   FATSECRET_ATTRIBUTION_LINE: "",
   FATSECRET_ATTRIBUTION_TELEGRAM: "",
 }));
 
 vi.mock("../src/channels/interactive", () => ({
   clearInteractiveKeyboard: vi.fn(),
+  sendInteractiveMessage: vi.fn(async () => 88),
 }));
 
 import { getOrCreateUser } from "../src/db/users";
@@ -86,11 +90,14 @@ import { sendOut } from "../src/handlers/commands";
 import { handleConfirmation } from "../src/handlers/confirmation";
 import { sendMealConfirmUi } from "../src/handlers/clarification";
 import { handleBarcodeLookup } from "../src/handlers/barcode";
-import { handleMealEdit } from "../src/handlers/meal-edit";
+import { handleEditReview, handleMealEdit } from "../src/handlers/meal-edit";
 import { processMessage } from "../src/handlers/dispatcher";
 import { runCoachAgent } from "../src/agents/coach";
 import { applyMealEdit } from "../src/agents/meal-edit";
-import { clearInteractiveKeyboard } from "../src/channels/interactive";
+import {
+  clearInteractiveKeyboard,
+  sendInteractiveMessage,
+} from "../src/channels/interactive";
 
 const testEnv = {
   OPENROUTER_API_KEY: "test-key",
@@ -165,7 +172,10 @@ describe("processMessage meal-edit chat routing", () => {
   it("routes free text during confirm to meal edit, not coach", async () => {
     vi.mocked(getPendingMeal).mockResolvedValue(pendingRow("confirm"));
     vi.mocked(updatePendingMealIf).mockResolvedValue(true);
-    vi.mocked(applyMealEdit).mockResolvedValue(estimate);
+    vi.mocked(applyMealEdit).mockResolvedValue({
+      estimate,
+      highlighted_change: null,
+    });
 
     await processMessage(testEnv, db, channel, textMsg("add cream please"));
 
@@ -177,7 +187,10 @@ describe("processMessage meal-edit chat routing", () => {
   it("routes free text during clarifying_toggle to meal edit", async () => {
     vi.mocked(getPendingMeal).mockResolvedValue(pendingRow("clarifying_toggle"));
     vi.mocked(updatePendingMealIf).mockResolvedValue(true);
-    vi.mocked(applyMealEdit).mockResolvedValue(estimate);
+    vi.mocked(applyMealEdit).mockResolvedValue({
+      estimate,
+      highlighted_change: null,
+    });
 
     await processMessage(testEnv, db, channel, textMsg("less ice"));
 
@@ -268,6 +281,40 @@ describe("processMessage meal-edit chat routing", () => {
     expect(applyMealEdit).not.toHaveBeenCalled();
     expect(runCoachAgent).not.toHaveBeenCalled();
   });
+
+  it("routes yes during reviewing_edit to apply edit, not log confirmation", async () => {
+    const pending = {
+      ...pendingRow("reviewing_edit"),
+      proposed_estimate_json: JSON.stringify({
+        estimate: { ...estimate, description: "burger with chicken patty", calories: 650 },
+        highlighted_change: {
+          name: "chicken patty",
+          calories: 280,
+          protein_g: 25,
+          carbs_g: 2,
+          fat_g: 18,
+        },
+      }),
+    };
+    vi.mocked(getPendingMeal).mockResolvedValue(pending);
+    vi.mocked(updatePendingMealIf).mockResolvedValue(true);
+
+    await processMessage(testEnv, db, channel, textMsg("yes"));
+
+    expect(handleConfirmation).not.toHaveBeenCalled();
+    expect(updatePendingMealIf).toHaveBeenCalledWith(
+      db,
+      1,
+      10,
+      expect.objectContaining({
+        phase: "confirm",
+        proposedEdit: null,
+        estimate: expect.objectContaining({ description: "burger with chicken patty" }),
+      }),
+    );
+    expect(sendMealConfirmUi).toHaveBeenCalled();
+    expect(applyMealEdit).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleMealEdit", () => {
@@ -285,42 +332,186 @@ describe("handleMealEdit", () => {
     vi.mocked(isPendingMealExpired).mockReturnValue(false);
     vi.mocked(updatePendingMealIf).mockResolvedValue(true);
     vi.mocked(applyMealEdit).mockResolvedValue({
-      ...estimate,
-      description: "iced coffee with cream",
-      calories: 250,
+      estimate: {
+        ...estimate,
+        description: "iced coffee with cream",
+        calories: 250,
+      },
+      highlighted_change: {
+        name: "cream",
+        calories: 50,
+        protein_g: 0,
+        carbs_g: 1,
+        fat_g: 5,
+      },
     });
   });
 
-  it("moves confirm pending into editing, applies edit, returns to confirm UI", async () => {
+  it("proposes an edit review instead of immediately confirming", async () => {
     const pending = pendingRow("confirm", 10);
     vi.mocked(getPendingMeal)
       .mockResolvedValueOnce({ ...pending, phase: "editing" })
-      .mockResolvedValueOnce({ ...pending, phase: "confirm", ui_message_id: "55" });
+      .mockResolvedValueOnce({ ...pending, phase: "reviewing_edit", ui_message_id: "55" });
+    vi.mocked(applyMealEdit).mockResolvedValue({
+      estimate: {
+        ...estimate,
+        description: "burger with chicken patty",
+        calories: 650,
+      },
+      highlighted_change: {
+        name: "chicken patty",
+        calories: 280,
+        protein_g: 25,
+        carbs_g: 2,
+        fat_g: 18,
+      },
+    });
 
-    await handleMealEdit(testEnv, db, channel, textMsg("add cream"), user, pending);
+    await handleMealEdit(
+      testEnv,
+      db,
+      channel,
+      textMsg("the burger was with a chicken patty"),
+      user,
+      pending,
+    );
 
     expect(clearInteractiveKeyboard).toHaveBeenCalledWith(channel, 123, "55");
     expect(updatePendingMealIf).toHaveBeenCalledWith(db, 1, 10, { phase: "editing" });
     expect(applyMealEdit).toHaveBeenCalledWith(
       testEnv,
       expect.objectContaining({ description: "iced coffee" }),
-      "add cream",
+      "the burger was with a chicken patty",
     );
     expect(updatePendingMealIf).toHaveBeenCalledWith(
       db,
       1,
       10,
       expect.objectContaining({
+        phase: "reviewing_edit",
+        proposedEdit: expect.objectContaining({
+          highlighted_change: expect.objectContaining({ name: "chicken patty" }),
+        }),
+      }),
+    );
+    expect(sendInteractiveMessage).toHaveBeenCalledWith(
+      channel,
+      123,
+      expect.stringContaining("chicken patty"),
+      expect.arrayContaining([
+        expect.arrayContaining([
+          expect.objectContaining({ data: "meal:apply_edit" }),
+          expect.objectContaining({ data: "meal:edit_again" }),
+        ]),
+      ]),
+      undefined,
+      expect.anything(),
+    );
+    expect(sendMealConfirmUi).not.toHaveBeenCalled();
+  });
+
+  it("applies a proposed edit when user confirms adjust", async () => {
+    const pending = {
+      ...pendingRow("reviewing_edit", 10),
+      proposed_estimate_json: JSON.stringify({
+        estimate: {
+          ...estimate,
+          description: "burger with chicken patty",
+          calories: 650,
+        },
+        highlighted_change: {
+          name: "chicken patty",
+          calories: 280,
+          protein_g: 25,
+          carbs_g: 2,
+          fat_g: 18,
+        },
+      }),
+    };
+    vi.mocked(getPendingMeal).mockResolvedValue({
+      ...pending,
+      phase: "confirm",
+      ui_message_id: "55",
+    });
+
+    await handleEditReview(
+      testEnv,
+      db,
+      channel,
+      textMsg("yes"),
+      user,
+      pending,
+      "apply_edit",
+    );
+
+    expect(updatePendingMealIf).toHaveBeenCalledWith(
+      db,
+      1,
+      10,
+      expect.objectContaining({
         phase: "confirm",
-        fatsecretPrefetch: null,
+        proposedEdit: null,
+        estimate: expect.objectContaining({ description: "burger with chicken patty" }),
       }),
     );
     expect(sendMealConfirmUi).toHaveBeenCalled();
   });
 
+  it("returns to editing when user chooses edit again", async () => {
+    const pending = {
+      ...pendingRow("reviewing_edit", 10),
+      proposed_estimate_json: JSON.stringify({
+        estimate: { ...estimate, description: "burger with chicken patty", calories: 650 },
+        highlighted_change: {
+          name: "chicken patty",
+          calories: 280,
+          protein_g: 25,
+          carbs_g: 2,
+          fat_g: 18,
+        },
+      }),
+    };
+
+    await handleEditReview(
+      testEnv,
+      db,
+      channel,
+      textMsg("edit"),
+      user,
+      pending,
+      "edit_again",
+    );
+
+    expect(clearInteractiveKeyboard).toHaveBeenCalledWith(channel, 123, "55");
+    expect(updatePendingMealIf).toHaveBeenCalledWith(db, 1, 10, {
+      phase: "editing",
+      proposedEdit: null,
+    });
+    expect(sendOut).toHaveBeenCalledWith(
+      channel,
+      db,
+      123,
+      1,
+      "telegram",
+      "what would you like to change?",
+      undefined,
+    );
+    expect(sendMealConfirmUi).not.toHaveBeenCalled();
+  });
+
   it("supports a second free-text edit while still on the same pending meal", async () => {
     const pending = pendingRow("confirm", 10);
     vi.mocked(getPendingMeal).mockResolvedValue({ ...pending, phase: "editing" });
+    vi.mocked(applyMealEdit).mockResolvedValue({
+      estimate: { ...estimate, description: "iced coffee with cream", calories: 250 },
+      highlighted_change: {
+        name: "cream",
+        calories: 50,
+        protein_g: 0,
+        carbs_g: 1,
+        fat_g: 5,
+      },
+    });
 
     await handleMealEdit(testEnv, db, channel, textMsg("add cream"), user, pending);
     await handleMealEdit(
