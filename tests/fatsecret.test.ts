@@ -8,13 +8,16 @@ import {
   assembleMealFromPrefetchCache,
   fetchClarifyNutritionCache,
   enrichEstimateWithFatSecret,
+  preferredFoodImageUrl,
   reconcileItemMacrosToMeal,
+  selectFoodMatch,
   WEIGHT_UNCERTAIN_ASSUMPTION,
   FATSECRET_API_URL,
   parseSearchResponse,
   percentEncode,
   pickServing,
   signOAuth1,
+  type FatSecretFood,
   type FatSecretServing,
 } from "../src/services/fatsecret";
 import { expandCompoundItems } from "../src/services/item-split";
@@ -172,6 +175,91 @@ describe("parseSearchResponse", () => {
     expect(parsed.foods).toHaveLength(2);
     expect(parsed.foods[0]!.servings).toHaveLength(2);
   });
+
+  it("parses include_food_images payloads", () => {
+    const body = {
+      foods_search: {
+        total_results: "1",
+        results: {
+          food: {
+            food_id: "1641",
+            food_name: "Chicken Breast",
+            food_images: {
+              food_image: [
+                {
+                  image_url:
+                    "https://www.foodimagedb.com/food-images/x_1024x1024.png",
+                  image_type: "1",
+                },
+                {
+                  image_url:
+                    "https://www.foodimagedb.com/food-images/x_400x400.png",
+                  image_type: "1",
+                },
+              ],
+            },
+            servings: {
+              serving: {
+                serving_id: "10",
+                serving_description: "100 g",
+                calories: "165",
+                carbohydrate: "0",
+                protein: "31",
+                fat: "3.6",
+              },
+            },
+          },
+        },
+      },
+    };
+    const parsed = parseSearchResponse(body);
+    expect(parsed.foods[0]!.images).toHaveLength(2);
+    expect(preferredFoodImageUrl(parsed.foods[0]!)).toContain("400x400");
+  });
+});
+
+describe("selectFoodMatch", () => {
+  const foods: FatSecretFood[] = [
+    {
+      food_id: "1",
+      food_name: "Apple Juice",
+      servings: [],
+      images: [
+        {
+          image_url: "https://www.foodimagedb.com/food-images/a_400x400.png",
+        },
+      ],
+    },
+    {
+      food_id: "2",
+      food_name: "Apple",
+      servings: [],
+      images: [
+        {
+          image_url: "https://www.foodimagedb.com/food-images/b_400x400.png",
+        },
+      ],
+    },
+  ];
+
+  it("returns the top hit when no ranker is provided", async () => {
+    const selected = await selectFoodMatch(foods, "apple");
+    expect(selected?.food_id).toBe("1");
+  });
+
+  it("uses image ranker when available", async () => {
+    const selected = await selectFoodMatch(foods, "apple", {
+      rankFoodCandidates: async () => foods[1]!,
+    });
+    expect(selected?.food_id).toBe("2");
+  });
+
+  it("falls back to top hit when ranker returns null", async () => {
+    const selected = await selectFoodMatch(foods, "apple", {
+      rankFoodCandidates: async () => null,
+    });
+    expect(selected?.food_id).toBe("1");
+  });
 });
 
 describe("blendItemMacrosWithVision", () => {
@@ -324,6 +412,90 @@ describe("pickServing", () => {
   });
 });
 
+
+describe("searchFoods premier images", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls foods.search.v5 with include_food_images", async () => {
+    const settings = settingsWithFatSecret();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          foods_search: {
+            total_results: "1",
+            results: {
+              food: {
+                food_id: "1",
+                food_name: "Apple",
+                food_images: {
+                  food_image: {
+                    image_url: "https://www.foodimagedb.com/food-images/a_400x400.png",
+                  },
+                },
+                servings: {
+                  serving: {
+                    serving_id: "10",
+                    serving_description: "100 g",
+                    metric_serving_amount: "100.000",
+                    metric_serving_unit: "g",
+                    calories: "52",
+                    carbohydrate: "14",
+                    protein: "0.3",
+                    fat: "0.2",
+                  },
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const { searchFoods } = await import("../src/services/fatsecret");
+    const result = await searchFoods("apple", settings);
+    expect(result.foods[0]!.images[0]!.image_url).toContain("400x400");
+
+    const body = new URLSearchParams(fetchMock.mock.calls[0]![1]?.body as string);
+    expect(body.get("method")).toBe("foods.search.v5");
+    expect(body.get("include_food_images")).toBe("true");
+  });
+
+  it("falls back to foods.search when v5 is unknown", async () => {
+    const settings = settingsWithFatSecret();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: "107", message: "Unknown method: foods.search.v5" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            foods: {
+              total_results: "1",
+              food: { food_id: "1", food_name: "Apple" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const { searchFoods } = await import("../src/services/fatsecret");
+    const result = await searchFoods("apple", settings);
+    expect(result.foods[0]!.food_name).toBe("Apple");
+    const first = new URLSearchParams(fetchMock.mock.calls[0]![1]?.body as string);
+    const second = new URLSearchParams(fetchMock.mock.calls[1]![1]?.body as string);
+    expect(first.get("method")).toBe("foods.search.v5");
+    expect(second.get("method")).toBe("foods.search");
+    expect(second.get("include_food_images")).toBeNull();
+  });
+});
+
 describe("enrichEstimateWithFatSecret", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -351,6 +523,76 @@ describe("enrichEstimateWithFatSecret", () => {
     carbs_g: 12,
     fat_g: 0.1,
   };
+
+  it("uses image ranker to pick among search candidates", async () => {
+    const settings = settingsWithFatSecret();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          foods_search: {
+            total_results: "2",
+            results: {
+              food: [
+                {
+                  food_id: "1",
+                  food_name: "Apple Juice",
+                  food_images: {
+                    food_image: {
+                      image_url: "https://www.foodimagedb.com/food-images/a_400x400.png",
+                    },
+                  },
+                  servings: {
+                    serving: {
+                      serving_id: "10",
+                      serving_description: "100 g",
+                      metric_serving_amount: "100.000",
+                      metric_serving_unit: "g",
+                      calories: "46",
+                      carbohydrate: "11",
+                      protein: "0.1",
+                      fat: "0.1",
+                    },
+                  },
+                },
+                {
+                  food_id: "2",
+                  food_name: "Apple",
+                  food_images: {
+                    food_image: {
+                      image_url: "https://www.foodimagedb.com/food-images/b_400x400.png",
+                    },
+                  },
+                  servings: {
+                    serving: {
+                      serving_id: "20",
+                      serving_description: "100 g",
+                      metric_serving_amount: "100.000",
+                      metric_serving_unit: "g",
+                      calories: "52",
+                      carbohydrate: "14",
+                      protein: "0.3",
+                      fat: "0.2",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await enrichEstimateWithFatSecret(visionEstimate, settings, {
+      rankFoodCandidates: async (_name, candidates) =>
+        candidates.find((c) => c.food_id === "2") ?? null,
+    });
+
+    expect(result.fatsecretUsed).toBe(true);
+    expect(result.estimate.items[0]!.calories).toBe(52);
+    expect(result.estimate.assumptions.some((a) => a.includes("Apple"))).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+  });
 
   it("returns unchanged estimate when FatSecret is disabled", async () => {
     const settings = getSettings(baseEnv);
@@ -519,7 +761,7 @@ describe("enrichEstimateWithFatSecret", () => {
       const searchExpression = body.get("search_expression") ?? "";
       const method = body.get("method");
 
-      if (method === "foods.search") {
+      if (method === "foods.search.v5" || method === "foods.search") {
         return new Response(
           JSON.stringify({
             foods: {
@@ -704,7 +946,7 @@ describe("enrichEstimateWithFatSecret", () => {
       const searchExpression = body.get("search_expression") ?? "";
       const foodId = body.get("food_id") ?? "";
 
-      if (method === "foods.search") {
+      if (method === "foods.search.v5" || method === "foods.search") {
         return new Response(
           JSON.stringify({
             foods: {
@@ -797,7 +1039,7 @@ describe("enrichEstimateWithFatSecret", () => {
       const searchExpression = body.get("search_expression") ?? "";
       const foodId = body.get("food_id") ?? "";
 
-      if (method === "foods.search") {
+      if (method === "foods.search.v5" || method === "foods.search") {
         const foodName =
           searchExpression.includes("milk")
             ? "Whole Milk"
@@ -878,7 +1120,7 @@ describe("enrichEstimateWithFatSecret", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
       const body = new URLSearchParams(init?.body as string);
       const method = body.get("method");
-      if (method === "foods.search") {
+      if (method === "foods.search.v5" || method === "foods.search") {
         return new Response(
           JSON.stringify({
             foods: {
@@ -955,7 +1197,7 @@ describe("enrichEstimateWithFatSecret", () => {
       const searchExpression = body.get("search_expression") ?? "";
       const foodId = body.get("food_id") ?? "";
 
-      if (method === "foods.search") {
+      if (method === "foods.search.v5" || method === "foods.search") {
         if (searchExpression.includes("mystery")) {
           return new Response(
             JSON.stringify({ foods: { total_results: "0" } }),
