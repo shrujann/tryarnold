@@ -676,9 +676,12 @@ export async function getFoodById(
   return food;
 }
 
+/** Default barcode region (Singapore), with Thailand as fallback. */
+export const FATSECRET_BARCODE_REGIONS = ["SG", "TH"] as const;
+
 /**
  * Premier barcode lookup. Returns full food + servings (food.get.v5 shape).
- * Error 211 = no food for barcode.
+ * Tries region SG first, then TH. Error 211 = no food for barcode in that region.
  */
 export async function findFoodByBarcode(
   barcode: string,
@@ -687,55 +690,80 @@ export async function findFoodByBarcode(
   const logger = createLogger(settings.logLevel);
   const method = "food.find_id_for_barcode.v2";
 
-  logger.debug({
-    stage: "fatsecret_request",
-    method,
-    barcode,
-    include_food_images: true,
-    include_sub_categories: true,
-  });
+  for (let i = 0; i < FATSECRET_BARCODE_REGIONS.length; i++) {
+    const region = FATSECRET_BARCODE_REGIONS[i]!;
+    const isLast = i === FATSECRET_BARCODE_REGIONS.length - 1;
 
-  const json = await callFatSecretApi(settings, {
-    method,
-    barcode,
-    format: "json",
-    include_sub_categories: "true",
-    include_food_images: "true",
-    flag_default_serving: "true",
-  });
+    logger.debug({
+      stage: "fatsecret_request",
+      method,
+      barcode,
+      region,
+      include_food_images: true,
+      include_sub_categories: true,
+    });
 
-  const apiError = parseFatSecretError(json);
-  if (apiError) {
-    if (apiError.startsWith("211")) {
+    const json = await callFatSecretApi(settings, {
+      method,
+      barcode,
+      format: "json",
+      region,
+      include_sub_categories: "true",
+      include_food_images: "true",
+      flag_default_serving: "true",
+    });
+
+    const apiError = parseFatSecretError(json);
+    if (apiError) {
+      if (apiError.startsWith("211")) {
+        logger.info({
+          stage: "fatsecret_response",
+          method,
+          barcode,
+          region,
+          message: isLast
+            ? "no food for barcode"
+            : "no food for barcode in region; trying fallback",
+        });
+        continue;
+      }
+      throw new Error(`FatSecret API error: ${apiError}`);
+    }
+
+    const food = parseFoodGetResponse(json);
+    if (!food) {
       logger.info({
         stage: "fatsecret_response",
         method,
         barcode,
-        message: "no food for barcode",
+        region,
+        message: isLast
+          ? "no food for barcode"
+          : "empty food payload; trying fallback",
       });
-      return null;
+      continue;
     }
-    throw new Error(`FatSecret API error: ${apiError}`);
+
+    const serving =
+      pickDefaultServing(food.servings) ?? pickServing(food.servings);
+
+    logger.debug({
+      stage: "fatsecret_response",
+      method,
+      barcode,
+      region,
+      food_id: food.food_id,
+      food_name: food.food_name,
+      brand_name: food.brand_name ?? null,
+      serving_used: serving?.serving_description ?? null,
+      image_count: food.images.length,
+      sub_category_count: food.subCategories.length,
+    });
+
+    return food;
   }
 
-  const food = parseFoodGetResponse(json);
-  const serving = food
-    ? pickDefaultServing(food.servings) ?? pickServing(food.servings)
-    : null;
-
-  logger.debug({
-    stage: "fatsecret_response",
-    method,
-    barcode,
-    food_id: food?.food_id ?? null,
-    food_name: food?.food_name ?? null,
-    brand_name: food?.brand_name ?? null,
-    serving_used: serving?.serving_description ?? null,
-    image_count: food?.images.length ?? 0,
-    sub_category_count: food?.subCategories.length ?? 0,
-  });
-
-  return food;
+  return null;
 }
 
 /** Build a confirm-ready estimate from a barcode FatSecret food record. */
