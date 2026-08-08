@@ -125,7 +125,7 @@ describe("barcode FatSecret helpers", () => {
     expect(estimate.portion?.container_type).toBe("packaged");
   });
 
-  it("calls food.find_id_for_barcode.v2 with region SG by default", async () => {
+  it("calls food.find_id_for_barcode.v2 with no region first (US default)", async () => {
     const settings = getSettings({
       PUBLIC_BASE_URL: "https://example.com",
       LOG_LEVEL: "DEBUG",
@@ -164,14 +164,14 @@ describe("barcode FatSecret helpers", () => {
 
     const body = new URLSearchParams(fetchMock.mock.calls[0]![1]?.body as string);
     expect(body.get("method")).toBe("food.find_id_for_barcode.v2");
-    expect(body.get("region")).toBe("SG");
+    expect(body.get("region")).toBeNull();
     expect(body.get("include_sub_categories")).toBe("true");
     expect(body.get("include_food_images")).toBe("true");
     expect(body.get("flag_default_serving")).toBe("true");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to region TH when SG returns 211", async () => {
+  it("falls back to SG then TH when earlier regions return 211", async () => {
     const settings = getSettings({
       PUBLIC_BASE_URL: "https://example.com",
       LOG_LEVEL: "DEBUG",
@@ -181,6 +181,12 @@ describe("barcode FatSecret helpers", () => {
 
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: "211", message: "No food item detected" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({ error: { code: "211", message: "No food item detected" } }),
@@ -216,11 +222,13 @@ describe("barcode FatSecret helpers", () => {
 
     const first = new URLSearchParams(fetchMock.mock.calls[0]![1]?.body as string);
     const second = new URLSearchParams(fetchMock.mock.calls[1]![1]?.body as string);
-    expect(first.get("region")).toBe("SG");
-    expect(second.get("region")).toBe("TH");
+    const third = new URLSearchParams(fetchMock.mock.calls[2]![1]?.body as string);
+    expect(first.get("region")).toBeNull();
+    expect(second.get("region")).toBe("SG");
+    expect(third.get("region")).toBe("TH");
   });
 
-  it("returns null when SG and TH both miss", async () => {
+  it("returns null when US, SG, and TH all miss", async () => {
     const settings = getSettings({
       PUBLIC_BASE_URL: "https://example.com",
       FATSECRET_CONSUMER_KEY: "key",
@@ -235,6 +243,6 @@ describe("barcode FatSecret helpers", () => {
     );
 
     await expect(findFoodByBarcode("0000000000000", settings)).resolves.toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

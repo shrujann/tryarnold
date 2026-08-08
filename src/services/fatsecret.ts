@@ -676,12 +676,15 @@ export async function getFoodById(
   return food;
 }
 
-/** Default barcode region (Singapore), with Thailand as fallback. */
-export const FATSECRET_BARCODE_REGIONS = ["SG", "TH"] as const;
+/**
+ * Barcode region attempts: omit region (US default), then Singapore, then Thailand.
+ * `null` means do not send the `region` param.
+ */
+export const FATSECRET_BARCODE_REGIONS = [null, "SG", "TH"] as const;
 
 /**
  * Premier barcode lookup. Returns full food + servings (food.get.v5 shape).
- * Tries region SG first, then TH. Error 211 = no food for barcode in that region.
+ * Tries no region (US), then SG, then TH. Error 211 = no food for barcode in that region.
  */
 export async function findFoodByBarcode(
   barcode: string,
@@ -692,26 +695,31 @@ export async function findFoodByBarcode(
 
   for (let i = 0; i < FATSECRET_BARCODE_REGIONS.length; i++) {
     const region = FATSECRET_BARCODE_REGIONS[i]!;
+    const regionLabel = region ?? "US";
     const isLast = i === FATSECRET_BARCODE_REGIONS.length - 1;
 
     logger.debug({
       stage: "fatsecret_request",
       method,
       barcode,
-      region,
+      region: regionLabel,
       include_food_images: true,
       include_sub_categories: true,
     });
 
-    const json = await callFatSecretApi(settings, {
+    const apiParams: Record<string, string> = {
       method,
       barcode,
       format: "json",
-      region,
       include_sub_categories: "true",
       include_food_images: "true",
       flag_default_serving: "true",
-    });
+    };
+    if (region) {
+      apiParams.region = region;
+    }
+
+    const json = await callFatSecretApi(settings, apiParams);
 
     const apiError = parseFatSecretError(json);
     if (apiError) {
@@ -720,7 +728,7 @@ export async function findFoodByBarcode(
           stage: "fatsecret_response",
           method,
           barcode,
-          region,
+          region: regionLabel,
           message: isLast
             ? "no food for barcode"
             : "no food for barcode in region; trying fallback",
@@ -736,7 +744,7 @@ export async function findFoodByBarcode(
         stage: "fatsecret_response",
         method,
         barcode,
-        region,
+        region: regionLabel,
         message: isLast
           ? "no food for barcode"
           : "empty food payload; trying fallback",
@@ -751,7 +759,7 @@ export async function findFoodByBarcode(
       stage: "fatsecret_response",
       method,
       barcode,
-      region,
+      region: regionLabel,
       food_id: food.food_id,
       food_name: food.food_name,
       brand_name: food.brand_name ?? null,
