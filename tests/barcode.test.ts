@@ -207,7 +207,7 @@ describe("barcode FatSecret helpers", () => {
       FATSECRET_CONSUMER_SECRET: "secret",
     } as Env);
 
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(
         JSON.stringify({ error: { code: "211", message: "No food item detected" } }),
         { status: 200, headers: { "content-type": "application/json" } },
