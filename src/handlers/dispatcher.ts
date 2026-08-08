@@ -169,6 +169,27 @@ export async function processMessage(
     return;
   }
 
+  // Typed barcode before meal-edit/coach so digits aren't treated as chat edits.
+  if (text) {
+    if (isBarcodeCommand(text) && !extractBarcodeFromText(text)) {
+      await sendOut(
+        channel,
+        db,
+        chatId,
+        userId,
+        channel.name,
+        "send /barcode followed by the digits, e.g. /barcode 8881234567890",
+        msg.replyToken,
+      );
+      return;
+    }
+    const barcode = extractBarcodeFromText(text);
+    if (barcode) {
+      await handleBarcodeLookup(env, db, channel, msg, user, barcode);
+      return;
+    }
+  }
+
   // Any free text while a pending meal exists is meal-changing chat, not coach.
   if (text && !text.startsWith("/")) {
     const pending = await getPendingMeal(db, userId);
@@ -194,27 +215,6 @@ export async function processMessage(
   if (hasPhoto(msg)) {
     await handlePhoto(env, db, channel, msg, user);
     return;
-  }
-
-  // Typed barcode: /barcode <digits> or a message that is only barcode digits.
-  if (text) {
-    if (isBarcodeCommand(text) && !extractBarcodeFromText(text)) {
-      await sendOut(
-        channel,
-        db,
-        chatId,
-        userId,
-        channel.name,
-        "send /barcode followed by the digits, e.g. /barcode 8881234567890",
-        msg.replyToken,
-      );
-      return;
-    }
-    const barcode = extractBarcodeFromText(text);
-    if (barcode) {
-      await handleBarcodeLookup(env, db, channel, msg, user, barcode);
-      return;
-    }
   }
 
   let reply: string;

@@ -20,7 +20,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-const MIN_BARCODE_CONFIDENCE = 0.7;
+const MIN_BARCODE_CONFIDENCE = 0.45;
 
 /**
  * Detect a retail barcode in a photo and return normalized GTIN-13 digits.
@@ -51,9 +51,11 @@ export async function extractBarcodeFromImage(
             {
               type: "text",
               text:
-                "Does this image primarily show a product barcode (UPC/EAN/JAN lines or digits under a barcode)? " +
-                "If yes, read the barcode digits only (no spaces). If this is a food/meal photo without a clear barcode, " +
-                "set has_barcode=false and barcode_digits=null. confidence is 0–1.",
+                "Look for a retail product barcode in this image (UPC/EAN/JAN bars and/or the digits printed under them). " +
+                "If any barcode digits are readable, set has_barcode=true and put ONLY those digits in barcode_digits " +
+                "(8, 12, or 13 digits, no spaces). Prefer the main product barcode, not QR codes. " +
+                "If this is only a plated meal/drink with no barcode, set has_barcode=false and barcode_digits=null. " +
+                "confidence is 0–1 for how readable the digits are.",
             },
             { type: "image_url", image_url: { url: dataUrl } },
           ],
@@ -61,18 +63,22 @@ export async function extractBarcodeFromImage(
       ]),
     );
 
-    logger.debug({
+    const normalized = result.barcode_digits
+      ? normalizeGtin13(result.barcode_digits)
+      : null;
+
+    logger.info({
       stage: "barcode_vision",
       has_barcode: result.has_barcode,
       barcode_digits: result.barcode_digits,
+      normalized,
       confidence: result.confidence,
     });
 
     if (!result.has_barcode || result.confidence < MIN_BARCODE_CONFIDENCE) {
       return null;
     }
-    if (!result.barcode_digits) return null;
-    return normalizeGtin13(result.barcode_digits);
+    return normalized;
   } catch (err) {
     logger.warn({
       stage: "barcode_vision",

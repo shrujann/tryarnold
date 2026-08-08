@@ -46,6 +46,10 @@ vi.mock("../src/handlers/photo", () => ({
   handlePhoto: vi.fn(),
 }));
 
+vi.mock("../src/handlers/barcode", () => ({
+  handleBarcodeLookup: vi.fn(),
+}));
+
 vi.mock("../src/handlers/onboarding", () => ({
   handleOnboarding: vi.fn(),
 }));
@@ -81,6 +85,7 @@ import {
 import { sendOut } from "../src/handlers/commands";
 import { handleConfirmation } from "../src/handlers/confirmation";
 import { sendMealConfirmUi } from "../src/handlers/clarification";
+import { handleBarcodeLookup } from "../src/handlers/barcode";
 import { handleMealEdit } from "../src/handlers/meal-edit";
 import { processMessage } from "../src/handlers/dispatcher";
 import { runCoachAgent } from "../src/agents/coach";
@@ -195,6 +200,44 @@ describe("processMessage meal-edit chat routing", () => {
     );
     expect(applyMealEdit).not.toHaveBeenCalled();
     expect(runCoachAgent).not.toHaveBeenCalled();
+  });
+
+  it("routes typed barcode digits to barcode lookup even with a pending meal", async () => {
+    vi.mocked(getPendingMeal).mockResolvedValue(pendingRow("confirm"));
+
+    await processMessage(testEnv, db, channel, textMsg("8850157400107"));
+
+    expect(handleBarcodeLookup).toHaveBeenCalledWith(
+      testEnv,
+      db,
+      channel,
+      expect.objectContaining({ text: "8850157400107" }),
+      user,
+      "8850157400107",
+    );
+    expect(applyMealEdit).not.toHaveBeenCalled();
+    expect(runCoachAgent).not.toHaveBeenCalled();
+  });
+
+  it("routes /barcode command to barcode lookup even with a pending meal", async () => {
+    vi.mocked(getPendingMeal).mockResolvedValue(pendingRow("confirm"));
+
+    await processMessage(
+      testEnv,
+      db,
+      channel,
+      textMsg("/barcode 8850157400107"),
+    );
+
+    expect(handleBarcodeLookup).toHaveBeenCalledWith(
+      testEnv,
+      db,
+      channel,
+      expect.objectContaining({ text: "/barcode 8850157400107" }),
+      user,
+      "8850157400107",
+    );
+    expect(applyMealEdit).not.toHaveBeenCalled();
   });
 
   it("uses coach when no pending meal exists", async () => {

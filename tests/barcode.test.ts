@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  extractBarcodeCandidate,
   extractBarcodeFromText,
   isBarcodeCommand,
   normalizeGtin13,
@@ -50,6 +51,25 @@ describe("extractBarcodeFromText", () => {
   it("detects barcode commands", () => {
     expect(isBarcodeCommand("/barcode 1")).toBe(true);
     expect(isBarcodeCommand("/help")).toBe(false);
+  });
+});
+
+describe("extractBarcodeCandidate", () => {
+  it("finds barcode digits inside caption text", () => {
+    expect(extractBarcodeCandidate("barcode 8850157400107 please")).toBe(
+      "8850157400107",
+    );
+    expect(extractBarcodeCandidate("UPC: 012345678901")).toBe("0012345678901");
+  });
+
+  it("prefers 13-digit runs over shorter ones", () => {
+    expect(extractBarcodeCandidate("lot 12345678 code 8881234567890")).toBe(
+      "8881234567890",
+    );
+  });
+
+  it("ignores short number runs in normal captions", () => {
+    expect(extractBarcodeCandidate("lunch for 2 people")).toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import type { InboundMessage, MessagingChannel } from "../channels/types";
 import type { UserRow } from "../db/users";
 import { extractBarcodeFromImage } from "../agents/barcode-vision";
 import { estimateFromImage } from "../agents/vision";
+import { extractBarcodeCandidate } from "../services/barcode";
 import { createLogger } from "../services/logger";
 import { handleBarcodeLookup } from "./barcode";
 import { sendOut } from "./commands";
@@ -46,18 +47,61 @@ export async function handlePhoto(
   try {
     const image = await channel.downloadPhoto(msg.photo.fileId);
 
-    // Prefer barcode lookup when the photo is a product barcode.
-    if (settings.fatsecretEnabled) {
-      const barcode = await extractBarcodeFromImage(env, image.bytes, image.mime);
-      if (barcode) {
-        logger.info({
-          stage: "photo_barcode",
-          userId,
-          barcode,
-        });
-        await handleBarcodeLookup(env, db, channel, msg, user, barcode);
+    // Fast path: caption already contains barcode digits.
+    const captionBarcode = msg.caption
+      ? extractBarcodeCandidate(msg.caption)
+      : null;
+    if (captionBarcode) {
+      logger.info({
+        stage: "photo_barcode",
+        userId,
+        barcode: captionBarcode,
+        source: "caption",
+      });
+      if (settings.fatsecretEnabled) {
+        await handleBarcodeLookup(env, db, channel, msg, user, captionBarcode);
         return;
       }
+      await sendOut(
+        channel,
+        db,
+        chatId,
+        userId,
+        channel.name,
+        `saw barcode ${captionBarcode}, but FatSecret isn't configured.`,
+        msg.replyToken,
+      );
+      return;
+    }
+
+    // Vision path: detect barcode in the image before food estimation.
+    logger.info({ stage: "barcode_check", userId, source: "vision" });
+    const visionBarcode = await extractBarcodeFromImage(
+      env,
+      image.bytes,
+      image.mime,
+    );
+    if (visionBarcode) {
+      logger.info({
+        stage: "photo_barcode",
+        userId,
+        barcode: visionBarcode,
+        source: "vision",
+      });
+      if (settings.fatsecretEnabled) {
+        await handleBarcodeLookup(env, db, channel, msg, user, visionBarcode);
+        return;
+      }
+      await sendOut(
+        channel,
+        db,
+        chatId,
+        userId,
+        channel.name,
+        `saw barcode ${visionBarcode}, but FatSecret isn't configured.`,
+        msg.replyToken,
+      );
+      return;
     }
 
     const { estimate: draft, clarification } = await estimateFromImage(
