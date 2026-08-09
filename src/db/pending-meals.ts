@@ -6,7 +6,8 @@ export type PendingMealPhase =
   | "clarifying_toggle"
   | "clarifying_exclusive"
   | "confirm"
-  | "editing";
+  | "editing"
+  | "reviewing_edit";
 
 export interface PendingMealRow {
   id: number;
@@ -23,6 +24,7 @@ export interface PendingMealRow {
   clarify_exclusive_choice?: string | null;
   ui_message_id?: string | null;
   fatsecret_prefetch_json?: string | null;
+  proposed_estimate_json?: string | null;
 }
 
 export function parseClarifyPlan(row: PendingMealRow): ClarifyPlan | null {
@@ -109,6 +111,7 @@ type PendingMealPatch = {
   exclusiveChoice?: string | null;
   uiMessageId?: string | null;
   fatsecretPrefetch?: import("../services/fatsecret").FatSecretPrefetchCache | null;
+  proposedEdit?: import("../services/meal-edit-review").ProposedMealEdit | null;
 };
 
 function buildPendingMealPatchSets(patch: PendingMealPatch): {
@@ -147,6 +150,10 @@ function buildPendingMealPatchSets(patch: PendingMealPatch): {
     values.push(
       patch.fatsecretPrefetch ? JSON.stringify(patch.fatsecretPrefetch) : null,
     );
+  }
+  if (patch.proposedEdit !== undefined) {
+    sets.push("proposed_estimate_json = ?");
+    values.push(patch.proposedEdit ? JSON.stringify(patch.proposedEdit) : null);
   }
 
   return { sets, values };
@@ -211,7 +218,8 @@ export function pendingPhase(row: PendingMealRow): PendingMealPhase {
     phase === "clarifying_toggle" ||
     phase === "clarifying_exclusive" ||
     phase === "confirm" ||
-    phase === "editing"
+    phase === "editing" ||
+    phase === "reviewing_edit"
   ) {
     return phase;
   }

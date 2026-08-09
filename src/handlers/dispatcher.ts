@@ -8,6 +8,7 @@ import {
   deletePendingMeal,
   getPendingMeal,
   isPendingMealExpired,
+  pendingPhase,
 } from "../db/pending-meals";
 import {
   extractBarcodeFromText,
@@ -16,6 +17,7 @@ import {
 import { normalizeOnboardAction, hasStartedOnboarding, START_REQUIRED_PROMPT, LINE_FOLLOW_PROMPT } from "../services/onboarding";
 import { normalizeActionWithSettings } from "../services/pending-meal";
 import { parseClarifyCallback } from "../services/clarification";
+import { parseEditReviewAction } from "../services/meal-edit-review";
 import { runCoachAgent } from "../agents/coach";
 import { handleBarcodeLookup } from "./barcode";
 import { handleCommand, sendOut } from "./commands";
@@ -23,7 +25,7 @@ import { handleOnboarding } from "./onboarding";
 import { handlePhoto } from "./photo";
 import { handleConfirmation } from "./confirmation";
 import { handleClarification } from "./clarification";
-import { handleMealEdit } from "./meal-edit";
+import { handleEditReview, handleMealEdit } from "./meal-edit";
 
 function isOnboarded(user: { onboarded?: number | null }): boolean {
   return Number(user.onboarded) === 1;
@@ -149,6 +151,43 @@ export async function processMessage(
     if (clarifyAction) {
       await handleClarification(env, db, channel, msg, user, clarifyAction);
       return;
+    }
+  }
+
+  // While reviewing a proposed edit, Adjust/Edit-again (and yes/edit aliases) win
+  // before the normal log/skip confirm path — "yes" means apply edit, not log.
+  {
+    const pendingForReview = await getPendingMeal(db, userId);
+    if (
+      pendingForReview &&
+      pendingPhase(pendingForReview) === "reviewing_edit"
+    ) {
+      const reviewAction = parseEditReviewAction(msg.callbackData ?? text);
+      if (reviewAction) {
+        if (isPendingMealExpired(pendingForReview, settings.pendingMealTtlMinutes)) {
+          await deletePendingMeal(db, userId);
+          await sendOut(
+            channel,
+            db,
+            chatId,
+            userId,
+            channel.name,
+            "that meal estimate expired. send the photo again.",
+            msg.replyToken,
+          );
+          return;
+        }
+        await handleEditReview(
+          env,
+          db,
+          channel,
+          msg,
+          user,
+          pendingForReview,
+          reviewAction,
+        );
+        return;
+      }
     }
   }
 
